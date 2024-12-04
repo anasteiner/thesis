@@ -21,11 +21,11 @@ library(zoo)
 
 ```{r}
 # Read the datasets
-setwd("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Code")
-census_data <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Code/census_data.csv")
-housing_data <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Code/ffinal_housing_cleaned.csv")
-neighborhood_data <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Code/neighborhood_data.csv")
-msoa_geometry <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code")
+census_data <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code/census_data.csv")
+housing_data <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code/ffinal_housing_cleaned.csv")
+neighborhood_data <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code/neighborhood_data.csv")
+msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
 ```
 
 ## Clean and join datasets

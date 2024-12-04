@@ -1,22 +1,22 @@
 ```{r}
 # Set up working directory and load files
 
-setwd("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data")
+setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data")
 
 # Load datasets
-house_prices <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/House prices.csv')
-accomodation_2011 <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/housing 2011.csv')
-accomodation_2021 <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/housing 2021.csv')
-tenure_2001 <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/home tenure 2001.csv')
-tenure_2011 <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/home tenure 2011.csv')
-tenure_2021 <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/home tenure 2021.csv')
-private_rents <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/private rents.csv')
-affordable_budget <- read_csv('C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/affordable budget.csv')
+house_prices <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/House prices.csv")
+accomodation_2011 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/housing 2011.csv")
+accomodation_2021 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/housing 2021.csv")
+tenure_2001 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/home tenure 2001.csv")
+tenure_2011 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/home tenure 2011.csv")
+tenure_2021 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/home tenure 2021.csv")
+private_rents <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/private rents.csv")
+affordable_budget <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/affordable budget.csv")
 
 # Spatial data
-msoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
-lsoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
-borough <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
+msoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+lsoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
+borough <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
 ```
 
 ```{r}
@@ -889,10 +889,12 @@ for (year in c(2001, 2005, 2011, 2015, 2021)) {
 
 ```
 
+## Religion data
+
 ```{r}
 # Load the datasets
 
-setwd("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/neighborhood data")
+setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/neighborhood data")
 
 religion_2001 <- read_csv("religion borough 2001.csv")
 religion_2011 <- read_csv("religion lsoa 2011.csv")
@@ -903,9 +905,9 @@ ptal2015 <- read_csv("lsoa 2015 ptal.csv")
 ptal2021 <- read_csv("grid 2021 ptal.csv")
 
 # Spatial data
-msoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
-lsoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
-borough <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
+msoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+lsoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
+borough <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
 ```
 
 ```{r}

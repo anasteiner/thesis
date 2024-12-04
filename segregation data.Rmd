@@ -30,7 +30,7 @@ conflict_prefer("select", "dplyr")
 
 ## Load segregation data
 ```{r}
-setwd("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data")
+setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data")
 
 # Demographic data
 census_2001 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census_2001.csv")
