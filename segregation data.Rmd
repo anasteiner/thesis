@@ -1,0 +1,757 @@
+## Load necessary libraries
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stats)
+library(readr) 
+library(zoo)  
+library(ggplot2)
+library(sf)
+library(tmap)
+library(sp)
+library(spdep)
+library(MASS)
+library(tidyverse)
+library(stringr)
+library(ineq)
+library(FactoMineR)
+library(factoextra)
+library(reshape2)
+```
+
+```{r}
+install.packages("conflicted")
+library(conflicted)
+conflict_prefer("filter", "dplyr")
+conflict_prefer("lag", "stats")
+conflict_prefer("select", "dplyr")
+```
+
+## Load segregation data
+```{r}
+setwd("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data")
+
+# Demographic data
+census_2001 <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/census 2001.csv")
+census_2011 <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/census 2011 vf.csv")
+census_2021 <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/census 2021.csv")
+
+# Spatial data
+msoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+lsoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
+borough <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
+```
+
+## Clean and join all data
+
+### Spatial data
+```{r}
+# Eliminate columns
+msoa <- dplyr::select(msoa, -USUALRES, -HHOLDRES, -COMESTRES, -POPDEN, -HHOLDS, -AVHHOLDSZ, -LAD11NM, -RGN11NM, -LAD11CD, -RGN11CD)
+
+# Eliminate columns
+lsoa <- dplyr::select(lsoa, -MSOA11CD, -MSOA11NM, -LAD11CD, -LAD11NM, -RGN11CD, -RGN11NM, -USUALRES, -HHOLDRES, -COMESTRES, -POPDEN, -HHOLDS, -AVHHOLDSZ)
+
+# Eliminate columns
+borough <- dplyr::select(borough, -HECTARES, -NONLD_AREA, -ONS_INNER, -SUB_2009, -SUB_2006)
+```
+
+### Demographic data
+
+##### Census 2001
+```{r}
+# Load necessary packages
+library(dplyr)
+
+# Clean columns
+names(census_2001)[names(census_2001) == "geography"] <- "MSOA11NM"
+names(census_2001)[names(census_2001) == "geography code"] <- "MSOA11CD"
+clean_2001 <- na.omit(census_2001)  
+clean_2001$year <- 2001  
+
+# Exclude unwanted columns
+column_indices <- c(1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45, 46, 48, 49, 50, 51, 52, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 75, 76, 77, 78, 79, 80, 82, 83, 84, 85)
+cleaner_2001 <- clean_2001[, column_indices]
+
+# Clean the nationality names and convert to numeric codes
+cleaner_2001 <- cleaner_2001 %>%
+  rename_with(~ gsub("Country of Birth: ", "", .x))
+
+# Identify nationality columns 
+non_nationality_columns <- c("MSOA11CD", "MSOA11NM", "date", "All categories: Country of birth; measures: Value")
+nationality_columns <- setdiff(names(cleaner_2001), non_nationality_columns)
+
+# Ensure all nationality columns are numeric
+cleaner_2001[nationality_columns] <- lapply(cleaner_2001[nationality_columns], as.numeric)
+
+# Add majority nationality value column
+cleaner_2001 <- cleaner_2001 %>%
+  rowwise() %>%
+  mutate(
+    Majority_Nationality_Value = max(c_across(all_of(nationality_columns)))
+  ) %>%
+  ungroup()
+
+# Select only the total population and specified nationalities
+specific_nationalities <- c("Romania; measures: Value", "Poland; measures: Value", 
+                            "Jamaica; measures: Value", "Other Caribbean and West Indies; measures: Value", 
+                            "Somalia; measures: Value", "Kenya; measures: Value", 
+                            "South Africa; measures: Value", "Zimbabwe; measures: Value", 
+                            "Other  South and Eastern Africa; measures: Value", "Bangladesh; measures: Value", 
+                            "South America; measures: Value")
+
+# Column for total population
+total_population_column <- "All categories: Country of birth; measures: Value"
+
+# Eliminate columns
+final_2001 <- cleaner_2001 %>%
+  dplyr::select(MSOA11NM, MSOA11CD, date, Majority_Nationality_Value, total_population_column, all_of(specific_nationalities))
+
+# Clean the column names
+final_2001 <- final_2001 %>%
+  rename_with(~ gsub("; measures: Value", "", .x))
+
+# Create new columns for aggregated nationalities
+final_2001 <- final_2001 %>%
+  mutate(
+    Caribbean = (`Jamaica` + `Other Caribbean and West Indies`),
+    SEAfrica = (`Somalia` + `Kenya` + `South Africa` + `Zimbabwe` + `Other  South and Eastern Africa`),
+    SouthAmerica = `South America`,
+  ) %>%
+  select(-`Jamaica`, -`Other Caribbean and West Indies`, -`Somalia`, -`Kenya`, -`South Africa`, -`Zimbabwe`, 
+         -`Other  South and Eastern Africa`, -`South America`)
+
+final_2001 <- final_2001 %>%
+  rename(
+    Total_Population_2001 = `All categories: Country of birth`,
+    Majority_2001 = `Majority_Nationality_Value`,
+    Caribbean_2001 = Caribbean,
+    SEAfrica_2001 = SEAfrica,
+    Poland_2001 = Poland,
+    Romania_2001 = Romania,
+    Bangladesh_2001 = Bangladesh,
+    SouthAmerica_2001 = SouthAmerica
+  )
+```
+
+##### Census 2011
+```{r}
+# Cleaning
+names(census_2011)[names(census_2011) == "geography"] <- "MSOA11NM"
+names(census_2011)[names(census_2011) == "geography code"] <- "MSOA11CD"
+clean_2011 <- na.omit(census_2011)  
+clean_2011$year <- 2011  
+
+# Eliminate columns
+column_indices <- c(1, 2, 3, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 22, 23, 24, 25, 26, 27, 29, 30, 31, 32, 34, 35, 37, 39, 40, 41, 43, 44, 45, 46, 47, 48, 51, 52, 54, 55, 56, 58, 59, 60, 61, 62, 64, 65, 69, 70, 71, 72, 74, 75, 77, 79, 80, 81, 82)
+cleaner_2011 <- clean_2011[, column_indices]
+
+# Rename columns
+specific_columns_corrected <- c(
+  "Country of Birth: All categories: Country of birth; measures: Value",
+  "Country of Birth: Europe: United Kingdom: England; measures: Value",
+  "Country of Birth: Europe: Other Europe: EU countries: Accession countries April 2001 to March 2011: Romania; measures: Value",
+  "Country of Birth: Europe: Other Europe: EU countries: Accession countries April 2001 to March 2011: Poland; measures: Value",
+"Country of Birth: Africa: South and Eastern Africa: Kenya; measures: Value",                                                  "Country of Birth: Africa: South and Eastern Africa: Somalia; measures: Value",
+"Country of Birth: Africa: South and Eastern Africa: South Africa; measures: Value",                                           "Country of Birth: Africa: South and Eastern Africa: Zimbabwe; measures: Value",                                               "Country of Birth: Africa: South and Eastern Africa: Other South and Eastern Africa; measures: Value", 
+  "Country of Birth: Middle East and Asia: Southern Asia: Bangladesh; measures: Value",
+  "Country of Birth: The Americas and the Caribbean: South America; measures: Value",
+"Country of Birth: The Americas and the Caribbean: The Caribbean: Jamaica; measures: Value",                                                        "Country of Birth: The Americas and the Caribbean: The Caribbean: Other Caribbean; measures: Value" 
+)
+
+specific_nationalities <- c("total population", "Majority", "Romania", "Poland", "Kenya", "Somalia", "South Africa", "Zimbabwe", "Other South and Eastern Africa", "Bangladesh", "South America", "Jamaica", "Other Caribbean")
+
+# Create final dataset
+final_2011 <- cleaner_2011 %>%
+  dplyr::select(MSOA11CD, MSOA11NM, date, all_of(specific_columns_corrected)) %>%
+  dplyr::rename_with(~ specific_nationalities, .cols = all_of(specific_columns_corrected))
+
+final_2011 <- final_2011 %>%
+  dplyr::mutate(
+    Caribbean = (`Jamaica` + `Other Caribbean`),  
+    SEAfrica = (`Somalia` + `Kenya` + `South Africa` + `Zimbabwe` + `Other South and Eastern Africa`)) %>%
+  select(-`Jamaica`, -`Other Caribbean`, -`Somalia`, -`Kenya`, -`South Africa`, -`Zimbabwe`, -`Other South and Eastern Africa`)
+
+final_2011 <- final_2011 %>%
+  rename(
+    Total_Population_2011 = `total population`,
+    Majority_2011 = `Majority`,
+    Caribbean_2011 = Caribbean,
+    SEAfrica_2011 = SEAfrica,
+    Poland_2011 = Poland,
+    Romania_2011 = Romania,
+    Bangladesh_2011 = Bangladesh,
+    SouthAmerica_2011 = `South America`
+  )
+```
+
+##### Census 2021
+
+```{r}
+
+# Initial cleaning
+names(census_2021)[names(census_2021) == "Middle layer Super Output Areas"] <- "MSOA11NM"
+names(census_2021)[names(census_2021) == "Middle layer Super Output Areas Code"] <- "MSOA11CD"
+clean_2021 <- na.omit(census_2021)
+
+# Pivot wider
+pivoted_2021 <- clean_2021 %>%
+  pivot_wider(
+    id_cols = c(MSOA11CD, MSOA11NM),
+    names_from = `Country of birth (60 categories)`,
+    values_from = Observation,
+    values_fill = list(Observation = 0)
+  )
+
+clean_pivoted_2021 <- na.omit(pivoted_2021)
+clean_pivoted_2021$date <- 2021
+head(clean_pivoted_2021)
+
+# Calculate total population from all nationality columns
+total_columns <- grep("Europe|Africa|Middle East and Asia|The Americas and the Caribbean", names(clean_pivoted_2021), value = TRUE)
+clean_pivoted_2021$Total_Population <- rowSums(clean_pivoted_2021[, total_columns], na.rm = TRUE)
+
+# Define specific nationalities and their columns 
+specific_columns <- c(
+  "Europe: United Kingdom: England",
+  "Europe: United Kingdom: Northern Ireland",
+  "Europe: United Kingdom: Scotland",
+  "Europe: United Kingdom: Wales",
+  "Europe: Other Europe: EU countries: Countries that joined the EU between April 2001 and March 2011: Romania",
+  "Europe: Other Europe: EU countries: Countries that joined the EU between April 2001 and March 2011: Poland",
+  "Africa: South and Eastern Africa: Somalia",
+  "Africa: South and Eastern Africa: Kenya",
+  "Africa: South and Eastern Africa: South Africa",
+  "Africa: South and Eastern Africa: Zimbabwe",
+  "Africa: South and Eastern Africa: Other South and Eastern Africa",
+  "Middle East and Asia: Southern Asia: Bangladesh",
+  "The Americas and the Caribbean: South America: All South American countries",
+  "The Americas and the Caribbean: The Caribbean: Jamaica",
+  "The Americas and the Caribbean: The Caribbean: Other Caribbean"
+)
+
+# Prepare the final dataset
+final_2021 <- clean_pivoted_2021 %>%
+  dplyr::select(MSOA11CD, MSOA11NM, date, Total_Population, all_of(specific_columns)) %>%
+  dplyr::rename(
+    England_2021 = `Europe: United Kingdom: England`,
+    Irland_2021 = `Europe: United Kingdom: Northern Ireland`,
+    Scotland_2021 = `Europe: United Kingdom: Scotland`,
+    Wales_2021 = `Europe: United Kingdom: Wales`,
+    Romania_2021 = `Europe: Other Europe: EU countries: Countries that joined the EU between April 2001 and March 2011: Romania`,
+    Poland_2021 = `Europe: Other Europe: EU countries: Countries that joined the EU between April 2001 and March 2011: Poland`,
+    Somalia_2021 = `Africa: South and Eastern Africa: Somalia`,
+    SEAfrica_2021 = `Africa: South and Eastern Africa: Other South and Eastern Africa`,
+    Bangladesh_2021 = `Middle East and Asia: Southern Asia: Bangladesh`,
+    SouthAmerica_2021 = `The Americas and the Caribbean: South America: All South American countries`,
+    Kenya_2021 = `Africa: South and Eastern Africa: Kenya`,
+    Zimbabwe_2021 = `Africa: South and Eastern Africa: Zimbabwe`,
+    SAfrica_2021 = `Africa: South and Eastern Africa: South Africa`,
+    Jamaica_2021 = `The Americas and the Caribbean: The Caribbean: Jamaica`,
+    Caribbean_2021 = `The Americas and the Caribbean: The Caribbean: Other Caribbean`
+  )
+
+final_2021 <- final_2021 %>%
+  dplyr::mutate(
+    Caribbean_2021 = (`Jamaica_2021` + `Caribbean_2021`),  
+    SEAfrica_2021 = (`Somalia_2021` + `Kenya_2021` + `SAfrica_2021` + `Zimbabwe_2021` + `SEAfrica_2021`), 
+    Majority_2021 = (`England_2021` + `Irland_2021` + `Scotland_2021` + `Wales_2021`)
+  ) %>%
+  select(-Jamaica_2021, -Somalia_2021, -Kenya_2021, -SAfrica_2021, -Zimbabwe_2021)
+
+final_2021 <- final_2021 %>%
+  select(-England_2021, -Irland_2021, -Scotland_2021, -Wales_2021)
+```
+
+##### Create a complete census dataset
+```{r}
+# Merge the datasets by MSOA codes and names
+combined_census <- final_2001 %>%
+  full_join(final_2011, by = c("MSOA11CD", "MSOA11NM")) %>%
+  full_join(final_2021, by = c("MSOA11CD", "MSOA11NM"))
+
+# Clean NA values
+final_census <- na.omit(combined_census)
+
+# Eliminate columns
+final_census <- dplyr::select(final_census, -date, -date.x, -date.y)
+
+final_census <- final_census %>%
+  rename(Total_Population_2021 = Total_Population)
+```
+
+```{r}
+#Brent 019, 020, 026 are the only ones that for 2021 changed to India as main nationality
+#(near wembley)
+```
+
+####Interpolate demogrpahic data set for non-census years
+```{r}
+
+colnames(final_census)
+names(final_census)[17] <- "Total_Population_2021"
+colnames(final_census)
+names(final_census)[17] <- "Caribbean_2011"
+names(final_census)[19] <- "Total_Population_2021"
+
+# Transform the data into a long format with separate Nationality and Year columns
+data_long <- final_census %>%
+  pivot_longer(
+    cols = -c(MSOA11CD, MSOA11NM), 
+    names_to = c("Nationality", "Year"), 
+    names_pattern = "(.*)_(\\d{4})",
+    values_to = "Population"
+  )
+
+# Convert Year to numeric
+data_long$Year <- as.numeric(data_long$Year)
+
+# View the transformed data
+print(data_long)
+
+# Interpolate for odd years between 2001 and 2021
+library(zoo)
+data_long_interpolated <- data_long %>%
+  group_by(MSOA11CD, Nationality) %>%
+  complete(Year = seq(2001, 2021, by = 1)) %>%
+  arrange(Year) %>%
+  mutate(Population = na.approx(Population, rule = 2))
+
+# Filter to keep only odd years
+data_long_odd_years <- data_long_interpolated %>%
+  filter(Year %% 2 == 1)
+
+```
+
+```{r}
+library(tidyr)
+
+# Fill down the MSOA11NM column
+data_long_odd_years <- data_long_odd_years %>%
+  group_by(MSOA11CD) %>%
+  fill(MSOA11NM, .direction = "downup") %>%
+  ungroup()
+
+# Join to msoa shp
+msoa_census <- left_join(msoa, data_long_odd_years, by = c("MSOA11NM", "MSOA11CD"))
+```
+
+```{r}
+# Calculate proportions of each nationality
+census_final <- msoa_census %>%
+  group_by(MSOA11CD, Year) %>%
+  mutate(
+    Total_Pop = Population[Nationality == "Total_Population"],
+    Proportion = ifelse(Nationality == "Total_Population", 1, Population / Total_Pop)
+  ) %>%
+  ungroup()
+```
+
+## 3 Segregation analysis
+
+```{r}
+# Replace zero proportions with a small value
+census_final$Proportion <- ifelse(census_final$Proportion == 0, 0.00001, census_final$Proportion)
+```
+
+### Dissimilarity index
+
+#### Application of dissimiliarity index
+```{r}
+library(dplyr)
+library(sf)
+
+# Specify the nationalities to compare against the majority
+nationalities <- c("Romania", "Poland", "Caribbean", "SouthAmerica", "SEAfrica", "Bangladesh")
+
+# Get unique years
+years <- unique(census_final$Year)
+
+# Initialize a dataframe to store results
+dissimilarity_results <- data.frame(MSOA11CD = character(), Year = integer(), Nationality = character(), Dissimilarity_Index = numeric(), stringsAsFactors = FALSE)
+
+for (year in years) {
+  for (nat in nationalities) {
+    # Filter data for the majority population in the current year
+    data_majority <- census_final %>%
+      filter(Nationality == "Majority" & Year == year) %>%
+      st_drop_geometry() %>%  
+      select(MSOA11CD, Year, Population) %>%
+      rename(Population_majority = Population)
+    
+    # Filter data for the specific nationality in the current year
+    data_nationality <- census_final %>%
+      filter(Nationality == nat & Year == year) %>%
+      st_drop_geometry() %>%  
+      select(MSOA11CD, Year, Population) %>%
+      rename(Population_nat = Population)
+    
+    # Merge the majority and nationality data on MSOA and Year
+    merged_data <- merge(data_majority, data_nationality, by = c("MSOA11CD", "Year"))
+    
+    if (nrow(merged_data) > 0) {
+      # Calculate the total population for majority and the target nationality
+      total_majority <- sum(merged_data$Population_majority)
+      total_nat <- sum(merged_data$Population_nat)
+      
+      # Calculate the Dissimilarity Index for each MSOA using count data
+      merged_data <- merged_data %>%
+        mutate(Dissimilarity = 0.5 * abs((Population_majority / total_majority) - (Population_nat / total_nat)))
+      
+      # Store the results
+      dissimilarity_results <- rbind(dissimilarity_results, 
+                                     data.frame(MSOA11CD = merged_data$MSOA11CD, 
+                                                Year = merged_data$Year, 
+                                                Nationality = nat, 
+                                                Dissimilarity_Index = merged_data$Dissimilarity))
+    }
+  }
+}
+
+# Print the dissimilarity results
+print(dissimilarity_results)
+
+# Join the Dissimilarity Index back to the original dataset if needed
+census_final_updated <- census_final %>%
+  left_join(dissimilarity_results, by = c("MSOA11CD", "Year", "Nationality"))
+
+# Print or save the updated dataset
+print(census_final_updated)
+
+```
+
+### Theil's H index
+```{r}
+
+library(data.table)
+final_census_dt <- as.data.table(census_final_updated)
+
+# Function to calculate Theil's H for a given dataframe
+calculate_theils_h <- function(df) {
+  df <- df %>%
+    mutate(Theils_H = ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0))  
+  return(sum(df$Theils_H, na.rm = TRUE))  
+}
+
+theils_h_results <- final_census_dt[Nationality != "Total_Population" & Nationality != "Majority",
+                                    .(H = sum(ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0), na.rm = TRUE)),
+                                    by = .(MSOA11CD, Year)]
+
+# Merge Theil's H results back into the final_census dataframe
+final_final_census <- census_final_updated %>%
+  left_join(theils_h_results, by = c("MSOA11CD", "Year"))
+
+# Check the result
+print(final_final_census)
+
+```
+
+### Isolation index
+```{r}
+# Convert final_final_census to data.table
+final_final_census_dt <- as.data.table(final_final_census)
+
+# Function to calculate Isolation Index for a given data.table
+calculate_isolation_index <- function(df) {
+  df[, .(Isolation_Index = sum(Proportion^2, na.rm = TRUE))]
+}
+
+# Calculate Isolation Index for each MSOA and Year using data.table
+isolation_results_dt <- final_final_census_dt[
+  Nationality != "Total_Population" & Nationality != "Majority", 
+  calculate_isolation_index(.SD), 
+  by = .(MSOA11CD, Year)
+]
+
+# Merge Isolation Index results back into the original data.table
+finalest_census_dt <- merge(final_final_census_dt, isolation_results_dt, by = c("MSOA11CD", "Year"), all.x = TRUE)
+
+# Check the result
+print(finalest_census_dt)
+```
+
+```{r}
+# Final cleaning
+
+# Filter out rows where Nationality is "Total_Population" or "Majority"
+finalest_census_dt <- finalest_census_dt[!(Nationality %in% c("Total_Population", "Majority"))]
+
+# Remove the columns "Total_Pop" and "Population"
+finalest_census_dt <- finalest_census_dt[, !c("Total_Pop", "Population"), with = FALSE]
+```
+
+## Download CSV
+```{r}
+str(finalest_census_dt)
+
+# Remove the geometry column from the data frame
+census_no_geo <- finalest_census_dt[, !"geometry"]
+
+# Write the cleaned data frame to a CSV file
+write.csv(census_no_geo, "census_data.csv", row.names = FALSE)
+```
+
+## Time changes for all demographic variables
+```{r}
+# Ensure the data is sorted correctly by Nationality and Year
+final_long <- final_long %>%
+  arrange(Nationality, Year, MSOA11CD)
+
+# Remove rows with any NA values
+final_long_clean <- final_long %>%
+  drop_na() 
+
+ggplot(final_long_clean, aes(x = Year, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +  # Bars side by side
+  facet_wrap(~ Nationality) +
+  theme_minimal() +
+  labs(title = "Dodged Bar Chart of Metrics Over Time",
+       x = "Year",
+       y = "Value",
+       fill = "Metric") +
+  theme(legend.position = "bottom")
+```
+
+#### Changes in space
+```{r}
+finalest_census_dt <- st_as_sf(finalest_census_dt)
+
+# Function to create a choropleth map
+create_choropleth <- function(nationality, metric, year) {
+  ggplot(data = finalest_census_dt %>% filter(Nationality == nationality, Year == year), 
+         aes_string(fill = metric)) + 
+    geom_sf(color = NA) + 
+    scale_fill_viridis_c(option = "plasma") + 
+    theme_minimal() +
+    labs(title = paste(nationality, "-", metric, "in", year, "by MSOA"),
+         fill = metric)
+}
+
+# List of nationalities, metrics, and years
+nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
+metrics <- c("Proportion", "Dissimilarity_Index", "cumulative_dissimilarity", "H", "Isolation_Index")
+years <- c(2001, 2005, 2011, 2015, 2021)
+
+# Create a directory to save the maps if it doesn't exist
+if (!dir.exists("maps")) dir.create("maps")
+
+# Generate maps and save them as files
+for (nat in nationalities) {
+  for (metric in metrics) {
+    for (year in years) {
+      map <- create_choropleth(nat, metric, year)
+      ggsave(filename = paste0("maps/", nat, "_", metric, "_", year, "_choropleth.png"), plot = map, width = 8, height = 6)
+    }
+  }
+}
+```
+
+```{r}
+# Calculate summary statistics by Year
+summary_by_year <- finalest_census_dt %>%
+  group_by(Year) %>%
+  summarise(across(where(is.numeric), list(mean = mean, sd = sd, min = min, max = max), na.rm = TRUE))
+
+# Calculate summary statistics by MSOA11CD
+summary_by_msoa <- finalest_census_dt %>%
+  group_by(MSOA11CD, geometry) %>%
+  summarise(across(where(is.numeric), list(mean = mean, sd = sd, min = min, max = max), na.rm = TRUE))
+
+# Display the summary statistics
+print(summary_by_year)
+print(summary_by_msoa)
+```
+```{r}
+# Write the cleaned data frame to a CSV file
+write.csv(summary_by_year, "census_year_data.csv", row.names = FALSE)
+# Write the cleaned data frame to a CSV file
+write.csv(summary_by_msoa, "census_msoa_data.csv", row.names = FALSE)
+```
+
+```{r}
+install.packages("spdep")
+library(spdep)
+```
+
+```{r}
+# Ensure the data is in sf format
+finalest_census_dt <- st_as_sf(finalest_census_dt)
+
+# Check and set the coordinate reference system (CRS) if needed
+finalest_census_dt <- st_transform(finalest_census_dt, crs = 27700)  
+```
+
+```{r}
+# Remove the H and Isolation_Index columns
+finalest_census_dt_cleaned <- finalest_census_dt %>%
+  select(-H, -Isolation_Index)
+```
+
+## Local Moran I's
+```{r}
+library(tidyr)
+
+# Reshape the data to wide format
+finalest_census_dt_wide <- finalest_census_dt_cleaned %>%
+  pivot_wider(names_from = Nationality, 
+              values_from = c(Proportion, Dissimilarity_Index, cumulative_dissimilarity))
+
+# Remove NA columns columns
+wide_cleaned <- finalest_census_dt_wide %>%
+  select(-Proportion_NA, -Dissimilarity_Index_NA, -cumulative_dissimilarity_NA)
+
+```
+
+```{r}
+# Check and fix geometries if necessary
+wide_cleaned <- st_make_valid(wide_cleaned)
+```
+
+```{r}
+# Create the neighbors list
+neighbors <- poly2nb(wide_cleaned)
+
+# Identify polygons with no neighbors
+no_neighbors <- which(sapply(neighbors, length) == 0)
+
+# Print the MSOA11CDs of polygons with no neighbors
+print(wide_cleaned$MSOA11CD[no_neighbors])
+```
+```{r}
+valid_geometries <- st_is_valid(wide_cleaned)
+print(sum(!valid_geometries))
+```
+
+```{r}
+library(spdep)
+library(sf)
+library(ggplot2)
+library(dplyr)
+
+# List of variables to analyze
+variables <- c(
+  "Proportion_Bangladesh", "Proportion_Caribbean", "Proportion_Poland",
+  "Proportion_Romania", "Proportion_SEAfrica", "Proportion_SouthAmerica",
+  "Dissimilarity_Index_Bangladesh", "Dissimilarity_Index_Caribbean", 
+  "Dissimilarity_Index_Poland", "Dissimilarity_Index_Romania", 
+  "Dissimilarity_Index_SEAfrica", "Dissimilarity_Index_SouthAmerica",
+  "cumulative_dissimilarity_Bangladesh", "cumulative_dissimilarity_Caribbean", 
+  "cumulative_dissimilarity_Poland", "cumulative_dissimilarity_Romania", 
+  "cumulative_dissimilarity_SEAfrica", "cumulative_dissimilarity_SouthAmerica"
+)
+
+# Unique years in the dataset
+years <- unique(wide_cleaned$Year)
+
+# Loop through each year and calculate Moran's I for each variable
+for (year in years) {
+  
+  # Filter data for the specific year
+  data_year <- wide_cleaned %>% filter(Year == year)
+  
+  # Convert to sf object if needed
+  data_year_sf <- st_as_sf(data_year, crs = 27700)
+  
+  # Create the neighbors list and spatial weights matrix
+  nb <- poly2nb(data_year_sf)
+  listw <- nb2listw(nb, zero.policy = TRUE)
+  
+  for (var in variables) {
+    
+    # Calculate Local Moran's I
+    local_moran <- localmoran(data_year_sf[[var]], listw)
+    
+    # Add results to the spatial dataframe
+    data_year_sf[[paste0(var, "_local_moran_I")]] <- local_moran[,1]  # Moran's I statistic
+    data_year_sf[[paste0(var, "_local_moran_p")]] <- local_moran[,5]  # p-value
+    
+    # Identify clusters
+    data_year_sf[[paste0(var, "_cluster")]] <- NA
+    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] > 0 & data_year_sf[[paste0(var, "_local_moran_p")]] < 0.05] <- "High-High"
+    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] < 0 & data_year_sf[[paste0(var, "_local_moran_p")]] < 0.05] <- "Low-Low"
+    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] > 0 & data_year_sf[[paste0(var, "_local_moran_p")]] >= 0.05] <- "Not Significant"
+    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] < 0 & data_year_sf[[paste0(var, "_local_moran_p")]] >= 0.05] <- "Not Significant"
+    
+    # Plot the Local Moran's I values
+    p <- ggplot(data_year_sf) +
+      geom_sf(aes_string(fill = paste0(var, "_local_moran_I"))) +
+      scale_fill_viridis_c(option = "C") +
+      labs(title = paste("Local Moran's I for", var, "in", year),
+           fill = "Local Moran's I") +
+      theme_minimal()
+    
+    # Save the Moran's I map
+    ggsave(paste0(var, "_Local_Morans_I_Map_", year, ".png"), plot = p, width = 7, height = 7)
+    
+    # Plot the cluster map
+    p_cluster <- ggplot(data_year_sf) +
+      geom_sf(aes_string(fill = paste0(var, "_cluster"))) +
+      scale_fill_manual(values = c("High-High" = "red", "Low-Low" = "blue", "Not Significant" = "grey")) +
+      labs(title = paste("Local Moran's I Cluster Map for", var, "in", year),
+           fill = "Cluster Type") +
+      theme_minimal()
+    
+    # Save the cluster map
+    ggsave(paste0(var, "_Local_Morans_I_Cluster_Map_", year, ".png"), plot = p_cluster, width = 7, height = 7)
+    
+  }
+}
+
+```
+
+## Hotspot analysis
+```{r}
+library(spdep)
+library(sf)
+library(ggplot2)
+
+# Ensure 'wide_cleaned' is an sf object
+wide_cleaned_sf <- st_as_sf(wide_cleaned)
+
+# Define a function for Hotspot Analysis
+calculate_hotspots <- function(data, variable) {
+  # Create spatial weights matrix based on contiguity (using queen's case)
+  nb <- poly2nb(data)
+  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+  
+  # Calculate local G statistics and convert to numeric vector
+  gstat <- as.numeric(localG(data[[variable]], listw))
+  
+  # Add local G statistics to the spatial dataframe
+  data[[paste0(variable, "_hotspot")]] <- gstat
+  
+  return(data)
+}
+
+# Apply Hotspot Analysis for each variable and year
+for (year in c(2001, 2005, 2011, 2015, 2021)) {
+  for (var in c(  "Proportion_Bangladesh", "Proportion_Caribbean", "Proportion_Poland",
+                  "Proportion_Romania", "Proportion_SEAfrica", "Proportion_SouthAmerica",
+                  "Dissimilarity_Index_Bangladesh", "Dissimilarity_Index_Caribbean", 
+                  "Dissimilarity_Index_Poland", "Dissimilarity_Index_Romania", 
+                  "Dissimilarity_Index_SEAfrica", "Dissimilarity_Index_SouthAmerica",
+                  "cumulative_dissimilarity_Bangladesh", "cumulative_dissimilarity_Caribbean", 
+                  "cumulative_dissimilarity_Poland", "cumulative_dissimilarity_Romania", 
+                  "cumulative_dissimilarity_SEAfrica", "cumulative_dissimilarity_SouthAmerica")) {
+    
+    # Filter data for the specific year
+    data_year <- wide_cleaned_sf %>% filter(Year == year)
+    
+    # Perform hotspot analysis
+    data_year_hotspot <- calculate_hotspots(data_year, var)
+    
+    # Plot the Hotspot Map
+    p_hotspot <- ggplot(data_year_hotspot) +
+      geom_sf(aes_string(fill = paste0(var, "_hotspot"))) +
+      scale_fill_viridis_c(option = "C") +
+      labs(title = paste("Hotspot Analysis for", var, "in", year),
+           fill = "Local G* Value") +
+      theme_minimal()
+    
+    # Save the Hotspot Map
+    ggsave(paste0(var, "_Hotspot_Map_", year, ".png"), plot = p_hotspot, width = 7, height = 7)
+  }
+}
+
+```
