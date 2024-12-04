@@ -33,14 +33,14 @@ conflict_prefer("select", "dplyr")
 setwd("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data")
 
 # Demographic data
-census_2001 <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/census 2001.csv")
-census_2011 <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/census 2011 vf.csv")
-census_2021 <- read_csv("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/census 2021.csv")
+census_2001 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census_2001.csv")
+census_2011 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census 2011 vf.csv")
+census_2021 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census 2021.csv")
 
 # Spatial data
-msoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
-lsoa <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
-borough <- st_read("C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
+msoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+lsoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
+borough <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
 ```
 
 ## Clean and join all data
