@@ -1,31 +1,25 @@
 ## Load necessary libraries
 ```{r}
-library(readxl)
-library(dplyr)
-library(tidyr)
-library(stats)
-library(readr) 
-library(zoo)  
-library(ggplot2)
-library(sf)
-library(tmap)
-library(sp)
-library(spdep)
-library(MASS)
-library(tidyverse)
-library(stringr)
-library(ineq)
-library(FactoMineR)
-library(factoextra)
-library(reshape2)
-```
+install.packages(c("readxl", "dplyr", "tidyr", "stats", "readr", "zoo", 
+                   "ggplot2", "sf", "tmap", "sp", "spdep", "MASS", 
+                    "tidyverse", "stringr", "ineq", "FactoMineR", 
+                    "factoextra", "reshape2"))
 
-```{r}
-install.packages("conflicted")
-library(conflicted)
-conflict_prefer("filter", "dplyr")
-conflict_prefer("lag", "stats")
-conflict_prefer("select", "dplyr")
+# Load libraries
+library(readxl)        
+library(dplyr)        
+library(tidyr)         
+library(stats)         
+library(readr)         
+library(zoo)           
+library(ggplot2) 
+library(sp)            
+library(MASS)         
+library(tidyverse)    
+library(stringr)       
+library(ineq)          
+library(factoextra)  
+library(reshape2)      
 ```
 
 ## Load segregation data
@@ -33,14 +27,22 @@ conflict_prefer("select", "dplyr")
 setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data")
 
 # Demographic data
-census_2001 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census_2001.csv")
+census_2001 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census 2001.csv")
 census_2011 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census 2011 vf.csv")
 census_2021 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/census 2021.csv")
 
-# Spatial data
-msoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
-lsoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
-borough <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
+install.packages("sf", type = "binary")
+library(sf)
+
+# Define file paths for the shapefiles
+msoa_path <- "/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp"
+lsoa_path <- "/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp"
+borough_path <- "/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp"
+
+# Read the shapefiles using st_read
+msoa <- st_read(msoa_path, quiet = FALSE)
+lsoa <- st_read(lsoa_path, quiet = FALSE)
+borough <- st_read(borough_path, quiet = FALSE)
 ```
 
 ## Clean and join all data
@@ -113,14 +115,16 @@ final_2001 <- final_2001 %>%
   rename_with(~ gsub("; measures: Value", "", .x))
 
 # Create new columns for aggregated nationalities
+library(dplyr)
+
 final_2001 <- final_2001 %>%
   mutate(
-    Caribbean = (`Jamaica` + `Other Caribbean and West Indies`),
-    SEAfrica = (`Somalia` + `Kenya` + `South Africa` + `Zimbabwe` + `Other  South and Eastern Africa`),
-    SouthAmerica = `South America`,
+    Caribbean = `Jamaica` + `Other Caribbean and West Indies`,
+    SEAfrica = `Somalia` + `Kenya` + `South Africa` + `Zimbabwe` + `Other  South and Eastern Africa`,
+    SouthAmerica = `South America`
   ) %>%
-  select(-`Jamaica`, -`Other Caribbean and West Indies`, -`Somalia`, -`Kenya`, -`South Africa`, -`Zimbabwe`, 
-         -`Other  South and Eastern Africa`, -`South America`)
+  dplyr::select(-`Jamaica`, -`Other Caribbean and West Indies`, -`Somalia`, -`Kenya`, -`South Africa`, -`Zimbabwe`, 
+                -`Other  South and Eastern Africa`, -`South America`)
 
 final_2001 <- final_2001 %>%
   rename(
@@ -169,9 +173,10 @@ final_2011 <- cleaner_2011 %>%
 
 final_2011 <- final_2011 %>%
   dplyr::mutate(
-    Caribbean = (`Jamaica` + `Other Caribbean`),  
-    SEAfrica = (`Somalia` + `Kenya` + `South Africa` + `Zimbabwe` + `Other South and Eastern Africa`)) %>%
-  select(-`Jamaica`, -`Other Caribbean`, -`Somalia`, -`Kenya`, -`South Africa`, -`Zimbabwe`, -`Other South and Eastern Africa`)
+    Caribbean = `Jamaica` + `Other Caribbean`,
+    SEAfrica = `Somalia` + `Kenya` + `South Africa` + `Zimbabwe` + `Other South and Eastern Africa`
+  ) %>%
+  dplyr::select(-`Jamaica`, -`Other Caribbean`, -`Somalia`, -`Kenya`, -`South Africa`, -`Zimbabwe`, -`Other South and Eastern Africa`)
 
 final_2011 <- final_2011 %>%
   rename(
@@ -189,7 +194,6 @@ final_2011 <- final_2011 %>%
 ##### Census 2021
 
 ```{r}
-
 # Initial cleaning
 names(census_2021)[names(census_2021) == "Middle layer Super Output Areas"] <- "MSOA11NM"
 names(census_2021)[names(census_2021) == "Middle layer Super Output Areas Code"] <- "MSOA11CD"
@@ -254,14 +258,14 @@ final_2021 <- clean_pivoted_2021 %>%
 
 final_2021 <- final_2021 %>%
   dplyr::mutate(
-    Caribbean_2021 = (`Jamaica_2021` + `Caribbean_2021`),  
-    SEAfrica_2021 = (`Somalia_2021` + `Kenya_2021` + `SAfrica_2021` + `Zimbabwe_2021` + `SEAfrica_2021`), 
-    Majority_2021 = (`England_2021` + `Irland_2021` + `Scotland_2021` + `Wales_2021`)
+    Caribbean_2021 = `Jamaica_2021` + `Caribbean_2021`,
+    SEAfrica_2021 = `Somalia_2021` + `Kenya_2021` + `SAfrica_2021` + `Zimbabwe_2021` + `SEAfrica_2021`,
+    Majority_2021 = `England_2021` + `Irland_2021` + `Scotland_2021` + `Wales_2021`
   ) %>%
-  select(-Jamaica_2021, -Somalia_2021, -Kenya_2021, -SAfrica_2021, -Zimbabwe_2021)
+  dplyr::select(-`Jamaica_2021`, -`Somalia_2021`, -`Kenya_2021`, -`SAfrica_2021`, -`Zimbabwe_2021`)
 
 final_2021 <- final_2021 %>%
-  select(-England_2021, -Irland_2021, -Scotland_2021, -Wales_2021)
+  dplyr::select(-England_2021, -Irland_2021, -Scotland_2021, -Wales_2021)
 ```
 
 ##### Create a complete census dataset
@@ -359,9 +363,6 @@ census_final$Proportion <- ifelse(census_final$Proportion == 0, 0.00001, census_
 
 #### Application of dissimiliarity index
 ```{r}
-library(dplyr)
-library(sf)
-
 # Specify the nationalities to compare against the majority
 nationalities <- c("Romania", "Poland", "Caribbean", "SouthAmerica", "SEAfrica", "Bangladesh")
 
@@ -377,14 +378,14 @@ for (year in years) {
     data_majority <- census_final %>%
       filter(Nationality == "Majority" & Year == year) %>%
       st_drop_geometry() %>%  
-      select(MSOA11CD, Year, Population) %>%
+      dplyr::select(MSOA11CD, Year, Population) %>%
       rename(Population_majority = Population)
     
     # Filter data for the specific nationality in the current year
     data_nationality <- census_final %>%
       filter(Nationality == nat & Year == year) %>%
       st_drop_geometry() %>%  
-      select(MSOA11CD, Year, Population) %>%
+      dplyr::select(MSOA11CD, Year, Population) %>%
       rename(Population_nat = Population)
     
     # Merge the majority and nationality data on MSOA and Year
@@ -418,8 +419,30 @@ census_final_updated <- census_final %>%
 
 # Print or save the updated dataset
 print(census_final_updated)
-
 ```
+#### Lagged diss (-1)
+```{r}
+# Ensure data is sorted properly for calculating the lag
+dissimilarity_results <- dissimilarity_results %>%
+  arrange(MSOA11CD, Nationality, Year) %>%  # Sort by MSOA, Nationality, and Year
+  group_by(MSOA11CD, Nationality) %>%       # Group by MSOA and Nationality
+  mutate(
+    lagged_diss = if_else(Year == 2001, Dissimilarity_Index, lag(Dissimilarity_Index, n = 1))
+  ) %>%  # Use the same value in 2001; lag for other years
+  ungroup()                                  # Ungroup after calculation
+
+# Print the updated dissimilarity results
+print(dissimilarity_results)
+
+# Join the lagged Dissimilarity Index back to the original dataset if needed
+census_final_updated <- census_final_updated %>%
+  left_join(dissimilarity_results %>% dplyr::select(MSOA11CD, Year, Nationality, lagged_diss),
+            by = c("MSOA11CD", "Year", "Nationality"))
+
+# Print or save the updated dataset with lagged diss
+print(census_final_updated)
+```
+
 
 ### Theil's H index
 ```{r}
@@ -478,7 +501,7 @@ print(finalest_census_dt)
 finalest_census_dt <- finalest_census_dt[!(Nationality %in% c("Total_Population", "Majority"))]
 
 # Remove the columns "Total_Pop" and "Population"
-finalest_census_dt <- finalest_census_dt[, !c("Total_Pop", "Population"), with = FALSE]
+finalest_census_dt <- finalest_census_dt[, !c("Total_Pop", "Population", "lagged_diss.x"), with = FALSE]
 ```
 
 ## Download CSV
