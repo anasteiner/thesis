@@ -2,7 +2,11 @@
 # Set up working directory and load files
 ```{r}
 install.packages("readr")  # Install the readr package
-library(readr)  
+library(readr) 
+install.packages("dplyr")
+library(dplyr)
+install.packages("sf")
+library(sf)
 
 setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data")
 
@@ -16,12 +20,10 @@ tenure_2021 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal di
 private_rents <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/private rents.csv")
 affordable_budget <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/affordable budget.csv")
 price_london <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/price_london.csv")
-tenure_london <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/tenure_london.xlsx")
+tenure_london <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/tenure_london.csv")
 
 
 # Spatial data
-install.packages("sf")
-library(sf)
 msoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
 lsoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/LSOA_2011_London_gen_MHW.shp")
 borough <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
@@ -66,6 +68,9 @@ average_houseprice <- msoa_houseprice %>%
   summarise(across(starts_with("20"), ~ mean(.x, na.rm = TRUE), .names = "avg_{.col}")) %>%
   ungroup()
 
+install.packages("tidyr")
+library(tidyr)
+
 long_format_houseprice <- average_houseprice %>%
   pivot_longer(
     cols = starts_with("avg_"),   # Pivot columns that start with "avg_"
@@ -82,6 +87,38 @@ long_format_houseprice <- long_format_houseprice %>%
   mutate(Year = as.numeric(Year))
 
 # Incorporate housing london as a new row
+library(lubridate)
+
+# Parse the Period column and prepare London_price data
+processed_london_price <- price_london %>%
+  mutate(
+    Period = as.Date(paste0(Period, "-01")),                # Convert year-month to Date
+    Year = year(Period),                                    # Extract year from Period
+    `Average price All property types` = as.numeric(`Average price All property types`)  # Ensure numeric
+  ) %>%
+  group_by(Year) %>%
+  summarise(
+    Houseprice = mean(`Average price All property types`, na.rm = TRUE)  # Average price per year
+  ) %>%
+  complete(Year = 2001:2021) %>%                            # Fill missing years 2001-2021
+  fill(Houseprice, .direction = "downup") %>%              # Fill missing values for interpolation
+  filter(!is.na(Houseprice)) %>%                           # Remove rows without house price data
+  mutate(
+    MSOA11CD = "London",                                   # Add London placeholder
+    MSOA11NM = "London",
+    geometry = NA                                          # No geometry for London
+  ) %>%
+  select(MSOA11CD, MSOA11NM, Year, Houseprice, geometry)   # Select relevant columns
+
+processed_london_price <- processed_london_price %>% filter(Year >= 2001 & Year <= 2021)
+processed_london_price <- processed_london_price %>%
+  mutate(geometry = st_sfc(st_geometrycollection(), crs = st_crs(long_format_houseprice))) %>%
+  st_as_sf(crs = st_crs(long_format_houseprice))
+
+# Combine with long_format_houseprice
+combined_houseprice <- long_format_houseprice %>%
+  bind_rows(processed_london_price)
+
 ```
 
 ## Accommodation
@@ -348,6 +385,122 @@ grouped_data <- wide_tenure %>%
   )
 
 # Add London data
+library(stringr)
+# Step 1: Remove the first row
+tenure_london <- tenure_london[-1, ]
+
+# Step 2: Remove all columns that start with "NA_..."
+tenure_london <- tenure_london %>%
+  select(-starts_with("NA_"))
+
+colnames(tenure_london)
+
+# Step 1: Extract years from "Own Outright" columns
+updated_colnames <- colnames(tenure_london)
+
+# Iterate through column names
+for (i in seq_along(updated_colnames)) {
+  if (str_detect(updated_colnames[i], "Own Outright_\\d{4}")) {
+    # Extract the year
+    year <- str_extract(updated_colnames[i], "\\d{4}")
+    
+    # Rename the corresponding columns
+    if ((i + 1) <= length(updated_colnames) && str_detect(updated_colnames[i + 1], "Buying with mortgage")) {
+      updated_colnames[i + 1] <- paste0("Buying with mortgage_", year)
+    }
+    if ((i + 2) <= length(updated_colnames) && str_detect(updated_colnames[i + 2], "Rented from Local Authority")) {
+      updated_colnames[i + 2] <- paste0("Rented from Local Authority or Housing Association_", year)
+    }
+    if ((i + 3) <= length(updated_colnames) && str_detect(updated_colnames[i + 3], "Rented from Private landlord")) {
+      updated_colnames[i + 3] <- paste0("Rented from Private landlord_", year)
+    }
+    if ((i + 4) <= length(updated_colnames) && str_detect(updated_colnames[i + 4], "Total_Total")) {
+      updated_colnames[i + 4] <- paste0("Total_Total_", year)
+    }
+  }
+}
+
+# Step 2: Assign updated column names back to the data
+colnames(tenure_london) <- updated_colnames
+
+# Step 3: Verify the updated column names
+print(colnames(tenure_london))
+
+tenure_london_filtered <- tenure_london %>%
+  filter(MSOA11NM == "London")
+
+tenure_london_long <- tenure_london_filtered %>%
+  pivot_longer(
+    cols = matches("_\\d{4}$"),     # Select columns ending with "_Year"
+    names_to = c("Category", "Year"), # Extract "Category" and "Year" from column names
+    names_pattern = "(.*)_(\\d{4})",  # Regex to split category and year
+    values_to = "Value"               # Values go into the "Value" column
+  ) %>%
+  pivot_wider(                       # Convert to wide format for separate columns
+    names_from = Category,           # Create new columns from categories
+    values_from = Value              # Values for these columns
+  )
+
+tenure_london_final <- tenure_london_long %>%
+  mutate(
+    average_owned = (`Own Outright` + `Buying with mortgage`) / Total_Total,
+    average_rented = `Rented from Private landlord` / Total_Total,
+    average_social = `Rented from Local Authority or Housing Association` / Total_Total
+  ) %>%
+  select(  # Step 2: Keep only the required columns
+    MSOA11CD,
+    MSOA11NM,
+    Year,
+    average_owned,
+    average_rented,
+    average_social
+  )
+
+tenure_london_final <- tenure_london_final %>%
+  mutate(Year = as.integer(Year))  # Convert Year to integer for consistency
+
+# Step 2: Define the complete range of years
+all_years <- 2001:2021
+
+# Step 2: Interpolate the missing years for each average column
+interpolated_tenure <- tenure_london_final %>%
+  group_by(MSOA11CD, MSOA11NM) %>%                # Group by MSOA
+  complete(Year = all_years) %>%                  # Ensure all years are present (2001–2021)
+  arrange(Year) %>%                               # Sort by year
+  mutate(
+    # Interpolate each column using approx()
+    average_owned = approx(x = Year[!is.na(average_owned)], 
+                           y = average_owned[!is.na(average_owned)], 
+                           xout = Year, 
+                           rule = 2)$y,
+    average_rented = approx(x = Year[!is.na(average_rented)], 
+                            y = average_rented[!is.na(average_rented)], 
+                            xout = Year, 
+                            rule = 2)$y,
+    average_social = approx(x = Year[!is.na(average_social)], 
+                            y = average_social[!is.na(average_social)], 
+                            xout = Year, 
+                            rule = 2)$y
+  ) %>%
+  ungroup()
+
+# Step 1: Add missing fields to the interpolated London data
+interpolated_tenure <- interpolated_tenure %>%
+  mutate(
+    MSOA11CD = "London",   # Set MSOA11CD to "London"
+    geometry = NA          # Add an empty geometry column
+  )
+
+# Step 2: Rename Year to match `grouped_data`
+interpolated_tenure <- interpolated_tenure %>%
+  rename(year = Year)  # Rename Year to year for consistency
+
+interpolated_tenure <- interpolated_tenure %>%
+  mutate(geometry = st_sfc(st_geometrycollection(), crs = st_crs(grouped_data)))  # Set CRS
+
+# Step 2: Combine the datasets
+final_tenancy <- grouped_data %>%
+  bind_rows(interpolated_tenure)
 ```
 
 ## Budget data
@@ -409,17 +562,36 @@ budget_long <- affordable_budget %>%
 budget_filtered <- budget_long %>%
   filter(as.integer(Year) %% 2 != 0)
 
-# Join the data frames by LAD11CD
-budget_msoa <- budget_filtered %>%
-  inner_join(msoa, by = "LAD11CD")
+budget_lad11cd <- budget_filtered %>%
+  full_join(msoa, by = "LAD11CD")
 
-# Create a new budget column by multiplying the budget by the proportion
+budget_msoa <- budget_lad11cd %>%
+  mutate(
+    budget_proportion = if_else(
+      MSOA11CD == "london_budget", 
+      Budget,                      # Copy the Budget for London_budget rows
+      Budget * Proportion          # Multiply by Proportion for other rows
+    )
+  )
+
 budget_msoa <- budget_msoa %>%
-  mutate(DisaggregatedBudget = Budget * Proportion)
+  mutate(
+    budget_proportion = if_else(
+      LAD11CD == "london_budget",   # Check if the row is for London_budget
+      as.numeric(Budget),          # Copy the Budget value for London_budget rows
+      as.numeric(Budget) * Proportion # Calculate for other rows
+    )
+  )
+
+budget_msoa <- budget_msoa %>%
+  mutate(
+    MSOA11CD = if_else(LAD11CD == "london_budget", "London", MSOA11CD), # Rename MSOA11CD for London_budget
+    MSOA11NM = if_else(LAD11CD == "london_budget", "London", MSOA11NM)  # Rename MSOA11NM for London_budget
+  )
 
 # Select the desired columns
 final_budget <- budget_msoa %>%
-  dplyr::select(MSOA11CD, MSOA11NM, geometry, Year, DisaggregatedBudget)
+  dplyr::select(MSOA11CD, MSOA11NM, geometry, Year, budget_proportion)
 ```
 
 ## Rent data
@@ -438,6 +610,9 @@ private_rents <- private_rents %>%
 
 # Rename the first column
 colnames(private_rents)[1] <- "LAD11CD"
+
+updated_rents <- private_rents %>%
+  mutate(LAD11CD = if_else(row_number() == 41, "London", LAD11CD))
 
 # Extract column names
 col_names <- colnames(private_rents)
@@ -467,7 +642,7 @@ colnames(private_rents)[19] <- "2018"
 colnames(private_rents)[20] <- "2019"
 
 # Convert to long format
-rents_long <- private_rents %>%
+rents_long <- updated_rents %>%
   pivot_longer(
     cols = starts_with("20"), # Select all columns that start with "20"
     names_to = "Year",        # Name for the new "Year" column
@@ -478,18 +653,18 @@ rents_long <- private_rents %>%
 rents_filtered <- rents_long %>%
   filter(as.integer(Year) %% 2 != 0)
 
-# Join the data frames by LAD11CD
-rents_msoa <- rents_filtered %>%
-  inner_join(msoa, by = "LAD11CD")
+rents_geom <- rents_filtered %>%
+  full_join(msoa, by = "LAD11CD")
 
-# Create a new budget column by multiplying the budget by the proportion
-rents_msoa <- rents_msoa %>%
-  mutate(Rent = as.integer(Rent), 
-         DisaggregatedRent = Rent * Proportion)
+rents_geom <- rents_geom %>%
+  mutate(
+    MSOA11CD = if_else(LAD11CD == "London", "London", MSOA11CD), # Rename MSOA11CD for London_budget
+    MSOA11NM = if_else(LAD11CD == "London", "London", MSOA11NM)  # Rename MSOA11NM for London_budget
+  )
 
 # Select the desired columns
-final_rents <- rents_msoa %>%
-  dplyr::select(MSOA11CD, MSOA11NM, geometry, Year, DisaggregatedRent)
+final_rents <- rents_geom %>%
+  dplyr::select(MSOA11CD, MSOA11NM, geometry, Year, Rent)
 ```
 
 ## Dummie policy data
