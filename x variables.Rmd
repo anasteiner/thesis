@@ -753,464 +753,93 @@ finals_dummies <- msoa_with_years %>%
 
 # Final housing data
 ```{r}
-# Create final Housing dataset
-
-final_budget <- final_budget %>% dplyr::select(-geometry)
-final_rents <- final_rents %>% dplyr::select(-geometry)
-grouped_data <- grouped_data %>% dplyr::select(-geometry)
-interpolated_accommodation <- interpolated_accommodation %>% dplyr::select(-geometry)
-long_format_houseprice <- long_format_houseprice %>% dplyr::select(-geometry)
-
-final_budget <- final_budget %>%
-  mutate(Year = as.integer(Year))
-
-final_rents <- final_rents %>%
-  mutate(Year = as.integer(Year))
-
-interpolated_accommodation <- interpolated_accommodation %>%
-  mutate(Year = as.integer(Year))
-
-long_format_houseprice <- long_format_houseprice %>%
-  mutate(Year = as.integer(Year))
-
-grouped_data <- grouped_data %>%
-  mutate(year = as.integer(year))
-
-housing <- final_budget %>%
-  inner_join(final_rents, by = c("MSOA11CD", "Year", "MSOA11NM")) %>%
-  inner_join(interpolated_accommodation, by = c("MSOA11CD", "Year", "MSOA11NM")) %>%
-  inner_join(long_format_houseprice, by = c("MSOA11CD", "Year", "MSOA11NM"))
-
-library(dplyr)
-
-# Remove geometry.x and rename geometry.y to geometry
-housing_cleaned <- housing %>%
-  dplyr::select(-geometry.x) %>%
-  dplyr::rename(geometry = geometry.y)
-
-# Load the dplyr package
-library(dplyr)
-
-grouped_data <- grouped_data%>%
-  dplyr::rename(Year = year)
-
-final_housing <- housing_cleaned %>%
-  inner_join(grouped_data, by = c("MSOA11CD", "Year"))
-
-final_housing <- final_housing %>% dplyr::select(-"geometry.y")
-final_housing <- final_housing %>% rename("geometry" = "geometry.x")
-```
-
-## EDA of housing components
-```{r}
-str(final_housing$DisaggregatedRent)
-
-# Identify non-numeric entries
-non_numeric <- final_housing[!is.na(as.numeric(final_housing$DisaggregatedRent)) == FALSE, ]
-print(non_numeric)
-
-# Calculate summary statistics by Year, ignoring NA values
-housing_by_year <- final_housing %>%
-  group_by(Year) %>%
-  summarise(across(
-    where(is.numeric),
-    list(
-      mean = ~mean(.x, na.rm = TRUE),
-      sd = ~sd(.x, na.rm = TRUE),
-      min = ~min(.x, na.rm = TRUE),
-      max = ~max(.x, na.rm = TRUE)
-    )
-  ))
-
-# Calculate summary statistics by MSOA11CD, ignoring NA values
-housing_by_msoa <- final_housing %>%
-  group_by(MSOA11CD, geometry) %>%
-  summarise(across(
-    where(is.numeric),
-    list(
-      mean = ~mean(.x, na.rm = TRUE),
-      sd = ~sd(.x, na.rm = TRUE),
-      min = ~min(.x, na.rm = TRUE),
-      max = ~max(.x, na.rm = TRUE)
-    )
-  ))
-
-# Save the dataset as a CSV file
-write.csv(housing_by_year, "C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Code/housing by year.csv", row.names = FALSE)
-write.csv(housing_by_msoa, "C:/Users/USUARIO/Documents/UCL/Dissertation/v3 longitudinal diaspora study/Code/housing by msoa.csv", row.names = FALSE)
-```
-
-# Annual changes for each variable
-```{r}
-# List of variables to plot
-variables_to_plot <- c(
-    "DisaggregatedBudget_mean",
-    "DisaggregatedRent_mean",
-    "Occupation_mean",
-    "Houseprice_mean",
-    "average_owned_mean",
-    "average_rented_mean",
-    "average_social_mean"
+# Step 1: Filter datasets for odd years
+datasets <- list(
+  interpolated_rents,
+  final_budget,
+  final_tenancy,
+  combined_houseprice,
+  accommodation_with_london
 )
 
-# Loop through each variable to create individual plots
-for (var in variables_to_plot) {
-  p <- ggplot(housing_by_year, aes_string(x = "Year", y = var)) +
-    geom_line(color = "blue") +
-    geom_point(color = "red") +
-    labs(title = paste("Year vs", var),
-         x = "Year",
-         y = var) +
-    theme_minimal()
-  
-  # Save each plot as a PNG file
-  ggsave(filename = paste0(var, "housing_trend.png"), plot = p)}
-```
+filtered_datasets <- lapply(datasets, function(data) {
+  data %>% filter(Year %% 2 != 0) # Keep only odd years
+})
 
-# MSOA changes for each variable
-```{r}
-# List of variables to create thematic maps
-variables_to_plot <- c(
-    "DisaggregatedBudget_mean",
-    "DisaggregatedRent_mean",
-    "Occupation_mean",
-    "Houseprice_mean",
-    "average_owned_mean",
-    "average_rented_mean",
-    "average_social_mean"
+# Assign filtered datasets back to their original names
+interpolated_rents <- filtered_datasets[[1]]
+final_budget <- filtered_datasets[[2]]
+final_tenancy <- filtered_datasets[[3]]
+combined_houseprice <- filtered_datasets[[4]]
+accommodation_with_london <- filtered_datasets[[5]]
+
+datasets_with_geometry <- list(
+  interpolated_rents,
+  final_budget,
+  final_tenancy,
+  combined_houseprice,
+  accommodation_with_london
 )
 
-housing_by_msoa <- st_as_sf(housing_by_msoa, crs = 27700)
+standardized_datasets <- lapply(datasets_with_geometry, function(data) {
+  if (!inherits(data, "sf") && "geometry" %in% names(data)) {
+    st_as_sf(data, sf_column_name = "geometry") # Convert to sf
+  } else {
+    data # Keep as is if already sf
+  }
+})
 
-# Loop through each variable to create and save thematic maps
-for (var in variables_to_plot) {
-  p <- ggplot(housing_by_msoa) +
-    geom_sf(aes_string(fill = var)) +
-    scale_fill_viridis_c() +  # Using Viridis color scale
-    labs(title = paste("Thematic Map of", var),
-         fill = var) +
-    theme_minimal()
-  
-  # Save each map as a PNG file
-  ggsave(filename = paste0(var, "housing_map.png"), plot = p)
-  
-  # Print the plot to the R console
-  print(p)
-}
+# Assign standardized datasets back to their names
+interpolated_rents <- standardized_datasets[[1]]
+final_budget <- standardized_datasets[[2]]
+final_tenancy <- standardized_datasets[[3]]
+combined_houseprice <- standardized_datasets[[4]]
+accommodation_with_london <- standardized_datasets[[5]]
+
+# Standardize CRS if not already aligned
+target_crs <- st_crs(final_dummies) # Use CRS of the first dataset
+standardized_datasets <- lapply(standardized_datasets, function(data) {
+  if (st_crs(data) != target_crs) {
+    st_transform(data, target_crs)
+  } else {
+    data
+  }
+})
+
+# Assign CRS-standardized datasets back to their names
+interpolated_rents <- standardized_datasets[[1]]
+final_budget <- standardized_datasets[[2]]
+final_tenancy <- standardized_datasets[[3]]
+combined_houseprice <- standardized_datasets[[4]]
+accommodation_with_london <- standardized_datasets[[5]]
+
+# Step 3: Full join all datasets
+joined_data <- interpolated_rents %>%
+  st_join(final_budget, join = st_intersects) %>%  # Spatial join based on geometries
+  st_join(final_tenancy, join = st_intersects) %>%
+  st_join(combined_houseprice, join = st_intersects) %>%
+  st_join(accommodation_with_london, join = st_intersects)
+
 ```
 
-
-```{r}
-# Calculate Housing Index with PCA
-
-# Load necessary libraries
-library(dplyr)
-library(stats)
-
-# 1. Standardize the directions of the variables
-housing_data <- final_housing %>%
-  mutate(
-    DisaggregatedBudget = DisaggregatedBudget, # Keep as is (higher is better)
-    DisaggregatedRent = -DisaggregatedRent, # Reverse
-    Occupation = -Occupation,               # Reverse
-    Houseprice = -Houseprice,               # Reverse
-    average_owned = average_owned,            # Keep as is (higher is better)
-    average_rented = -average_rented,         # Reverse (if considered worse)
-    average_social = average_social          # Keep as is (higher is better)
-  ) %>%
-  dplyr::select(-c(MSOA11CD, MSOA11NM, Year, geometry))
-
-# 2. Check for infinite or missing values
-
-housing_data <- housing_data %>%
-  mutate(across(everything(), as.numeric))
-
-any(is.infinite(unlist(housing_data)))  # Returns TRUE if there are infinite values
-any(is.na(housing_data))       # Returns TRUE if there are missing values
-
-# Remove rows with missing values
-housing_data_clean <- housing_data %>% drop_na()
-
-# 3. Standardize the data
-housing_data_scaled <- scale(housing_data_clean)
-
-# 4. Perform PCA
-pca_result <- prcomp(housing_data_scaled, center = TRUE, scale. = TRUE)
-
-# 5. Calculate the Housing Index using the first principal component
-housing_index <- pca_result$x[,1]
-
-# 5. Add the Housing Index to the original data frame
-# Extract rows used for PCA
-valid_rows <- complete.cases(final_housing %>% dplyr::select(-c(MSOA11CD, MSOA11NM, Year, geometry)))
-ffinal_housing <- final_housing %>%
-  filter(valid_rows) %>%
-  mutate(HousingIndex = housing_index)
-
-# 6. Select the final desired columns
-ffinal_housing <- ffinal_housing %>%
-  dplyr::select(MSOA11CD, MSOA11NM, geometry, Year, HousingIndex)
-
-# Reverse the sign of the Housing Index
-ffinal_housing <- ffinal_housing %>%
-  mutate(HousingIndex = -HousingIndex)
-```
-
-## EDA
-
-```{r}
-# Housing Index throughout time
-
-# Load necessary libraries
-library(dplyr)
-library(ggplot2)
-library(sf)
-
-# Assuming your dataset is named 'housing_data'
-# Convert your data to an sf object
-ffinal_housing_sf <- st_as_sf(ffinal_housing, crs = 27700)
-
-# 1. Maps for selected years
-years_to_map <- c(2001, 2005, 2011, 2015, 2021)
-
-for (year in years_to_map) {
-  housing_year <- ffinal_housing_sf %>% filter(Year == year)
-  print(
-    ggplot(data = housing_year) +
-      geom_sf(aes(fill = HousingIndex)) +
-      scale_fill_viridis_c() +
-      ggtitle(paste("Housing Index in", year)) +
-      theme_minimal() +
-      labs(fill = "Housing Index") +
-      theme(legend.position = "right") +
-      theme(axis.text = element_blank(), axis.ticks = element_blank())
-  )
-}
-```
-
-```{r}
-# Map of average Housing Index
-average_housing <- ffinal_housing_sf %>%
-  group_by(MSOA11CD) %>%
-  summarise(AvgHousingIndex = mean(HousingIndex, na.rm = TRUE))
-
-ggplot(data = average_housing) +
-  geom_sf(aes(fill = AvgHousingIndex)) +
-  scale_fill_viridis_c() +
-  ggtitle("Average Housing Index") +
-  theme_minimal() +
-  labs(fill = "Avg Housing Index") +
-  theme(legend.position = "right") +
-  theme(axis.text = element_blank(), axis.ticks = element_blank())
-```
-
-```{r}
-# Trend in changes of HI for MSOAs
-
-library(dplyr)
-library(sf)
-library(ggplot2)
-
-# Determine the trend (increase, decrease, same) for each MSOA
-housing_trends <- ffinal_housing_sf %>%
-  group_by(MSOA11CD) %>%
-  summarise(
-    Start = min(HousingIndex, na.rm = TRUE),
-    End = max(HousingIndex, na.rm = TRUE)
-  ) %>%
-  mutate(Trend = case_when(
-    End > Start ~ "Increased",
-    End < Start ~ "Decreased",
-    End == Start ~ "Same"
-  ))
-
-# Ensure the MSOA11CD column is unique in housing_trends
-housing_trends <- housing_trends %>%
-  distinct(MSOA11CD, .keep_all = TRUE)
-
-# Plotting the trend
-ggplot(housing_trends) +
-  geom_sf(aes(fill = Trend)) +
-  scale_fill_manual(values = c("Increased" = "green", "Decreased" = "red", "Same" = "gray")) +
-  ggtitle("MSOA Trends in Housing Index") +
-  theme_minimal() +
-  labs(fill = "Trend") +
-  theme(legend.position = "right") +
-  theme(axis.text = element_blank(), axis.ticks = element_blank())
-```
-
-## Download CSV
+## Download CSV..
 ```{r}
 # Remove the geometry column from the data frame
-ffinal_housing_no_geo <- as.data.frame(ffinal_housing)
-ffinal_housing_no_geo$geometry <- NULL
+joined_data <- as.data.frame(joined_data)
+housing_no_geo$geometry <- NULL
 
 
 # Write the cleaned data frame to a CSV file
-write.csv(ffinal_housing_no_geo, "ffinal_housing_cleaned.csv", row.names = FALSE)
+write.csv(housing_no_geo, "housing_data.csv", row.names = FALSE)
 ```
 
-```{r}
-install.packages("spdep")
-library(spdep)
-```
-
-```{r}
-# Ensure the data is in sf format
-ffinal_housing <- st_as_sf(ffinal_housing)
-
-# Check and set the coordinate reference system (CRS) if needed
-ffinal_housing <- st_transform(ffinal_housing, crs = 27700)  
-```
-
-## Local Moran I's
-```{r}
-# Check and fix geometries if necessary
-ffinal_housing <- st_make_valid(ffinal_housing)
-```
-
-```{r}
-# Create the neighbors list
-neighbors <- poly2nb(ffinal_housing)
-
-# Identify polygons with no neighbors
-no_neighbors <- which(sapply(neighbors, length) == 0)
-
-# Print the MSOA11CDs of polygons with no neighbors
-print(ffinal_housing$MSOA11CD[no_neighbors])
-```
-
-```{r}
-valid_geometries <- st_is_valid(ffinal_housing)
-print(sum(!valid_geometries))
-```
-
-```{r}
-library(spdep)
-library(sf)
-library(ggplot2)
-library(dplyr)
-
-# List of variables to analyze
-variables <- c(
-  "HousingIndex"
-)
-
-# Unique years in the dataset
-years <- unique(ffinal_housing$Year)
-
-# Loop through each year and calculate Moran's I for each variable
-for (year in years) {
-  
-  # Filter data for the specific year
-  data_year <- ffinal_housing %>% filter(Year == year)
-  
-  # Convert to sf object if needed
-  data_year_sf <- st_as_sf(data_year, crs = 27700)
-  
-  # Create the neighbors list and spatial weights matrix
-  nb <- poly2nb(data_year_sf)
-  listw <- nb2listw(nb, zero.policy = TRUE)
-  
-  for (var in variables) {
-    
-    # Calculate Local Moran's I
-    local_moran <- localmoran(data_year_sf[[var]], listw)
-    
-    # Add results to the spatial dataframe
-    data_year_sf[[paste0(var, "_local_moran_I")]] <- local_moran[,1]  # Moran's I statistic
-    data_year_sf[[paste0(var, "_local_moran_p")]] <- local_moran[,5]  # p-value
-    
-    # Identify clusters
-    data_year_sf[[paste0(var, "_cluster")]] <- NA
-    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] > 0 & data_year_sf[[paste0(var, "_local_moran_p")]] < 0.05] <- "High-High"
-    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] < 0 & data_year_sf[[paste0(var, "_local_moran_p")]] < 0.05] <- "Low-Low"
-    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] > 0 & data_year_sf[[paste0(var, "_local_moran_p")]] >= 0.05] <- "Not Significant"
-    data_year_sf[[paste0(var, "_cluster")]][data_year_sf[[paste0(var, "_local_moran_I")]] < 0 & data_year_sf[[paste0(var, "_local_moran_p")]] >= 0.05] <- "Not Significant"
-    
-    # Plot the Local Moran's I values
-    p <- ggplot(data_year_sf) +
-      geom_sf(aes_string(fill = paste0(var, "_local_moran_I"))) +
-      scale_fill_viridis_c(option = "C") +
-      labs(title = paste("Local Moran's I for", var, "in", year),
-           fill = "Local Moran's I") +
-      theme_minimal()
-    
-    # Save the Moran's I map
-    ggsave(paste0(var, "_Local_Morans_I_Map_", year, ".png"), plot = p, width = 7, height = 7)
-    
-    # Plot the cluster map
-    p_cluster <- ggplot(data_year_sf) +
-      geom_sf(aes_string(fill = paste0(var, "_cluster"))) +
-      scale_fill_manual(values = c("High-High" = "red", "Low-Low" = "blue", "Not Significant" = "grey")) +
-      labs(title = paste("Local Moran's I Cluster Map for", var, "in", year),
-           fill = "Cluster Type") +
-      theme_minimal()
-    
-    # Save the cluster map
-    ggsave(paste0(var, "_Local_Morans_I_Cluster_Map_", year, ".png"), plot = p_cluster, width = 7, height = 7)
-    
-  }
-}
-
-```
-
-## Hotspot analysis
-```{r}
-library(spdep)
-library(sf)
-library(ggplot2)
-
-# Define a function for Hotspot Analysis
-calculate_hotspots <- function(data, variable) {
-  # Create spatial weights matrix based on contiguity (using queen's case)
-  nb <- poly2nb(data)
-  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
-  
-  # Calculate local G statistics and convert to numeric vector
-  gstat <- as.numeric(localG(data[[variable]], listw))
-  
-  # Add local G statistics to the spatial dataframe
-  data[[paste0(variable, "_hotspot")]] <- gstat
-  
-  return(data)
-}
-
-# Apply Hotspot Analysis for each variable and year
-for (year in c(2001, 2005, 2011, 2015, 2021)) {
-  for (var in c(  "HousingIndex")) {
-    
-    # Filter data for the specific year
-    data_year <- ffinal_housing %>% filter(Year == year)
-    
-    # Perform hotspot analysis
-    data_year_hotspot <- calculate_hotspots(data_year, var)
-    
-    # Plot the Hotspot Map
-    p_hotspot <- ggplot(data_year_hotspot) +
-      geom_sf(aes_string(fill = paste0(var, "_hotspot"))) +
-      scale_fill_viridis_c(option = "C") +
-      labs(title = paste("Hotspot Analysis for", var, "in", year),
-           fill = "Local G* Value") +
-      theme_minimal()
-    
-    # Save the Hotspot Map
-    ggsave(paste0(var, "_Hotspot_Map_", year, ".png"), plot = p_hotspot, width = 7, height = 7)
-  }
-}
-
-```
-
-## Religion data
+## Neighborhood data
 
 ```{r}
 # Load the datasets
 
 setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/neighborhood data")
 
-religion_2001 <- read_csv("religion borough 2001.csv")
-religion_2011 <- read_csv("religion lsoa 2011.csv")
-religion_2021 <- read_csv("religion msoa 2021.csv")
 greenery_df <- read_csv("greenery boroughs.csv")
 crime_df <- read_csv("historic crime 2010-2021.csv")
 ptal2015 <- read_csv("lsoa 2015 ptal.csv")
@@ -1222,263 +851,9 @@ lsoa <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora s
 borough <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/London_Borough_Excluding_MHW.shp")
 ```
 
-```{r}
-# Religion 2001
-library(dplyr)
-
-# Convert the columns representing religions to numeric, if necessary
-religion_2001[ , 4:11] <- lapply(religion_2001[ , 4:11], as.numeric)
-
-names(religion_2001)
-
-#Eliminate columns
-religion_2001 <- religion_2001[, -c(1, 3)]
-
-# Define the function to find the majority religion
-majority_religion <- function(row) {
-  # Extract only the numeric values
-  religion_counts <- c(
-    Christian = row["Christian"],
-    Buddhist = row["Buddhist"],
-    Hindu = row["Hindu"],
-    Jewish = row["Jewish"],
-    Muslim = row["Muslim"],
-    Sikh = row["Sikh"],
-    `Other religions` = row["Other religions"],
-    `No religion` = row["No religion"]
-  )
-  
-  # Find the maximum value
-  max_count <- max(religion_counts)
-    # Find the names with the maximum value
-  majority_religions <- names(religion_counts)[religion_counts == max_count]
-  
-  # Check for ties
-  if (length(majority_religions) > 1) {
-    return("No single majority")
-  }
-  
-  return(majority_religions)
-}
-
-
-# Apply the function to each row
-religion_2001$Majority_Religion <- apply(religion_2001, 1, majority_religion)
-
-#Eliminate columns
-religion_2001 <- religion_2001[, -c(2, 3, 4, 5, 6, 7, 8, 9)]
-
-merged_2001_religion <- religion_2001 %>%
-  left_join(msoa, by = c("Borough" = "LAD11NM"))
-
-#Eliminate columns
-merged_2001_religion <- merged_2001_religion[, -c(1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)]
-```
+## Greenery
 
 ```{r}
-# Religion 2011
-
-#Eliminate columns
-religion_2011 <- religion_2011[, -c(2)]
-
-# Rename columns for easier access
-religion_2011 <- religion_2011 %>%
-  rename(
-    LSOA = `Lower Super Output Area`,
-    Christian = `Religion;Christian;2011`,
-    Buddhist = `Religion;Buddhist;2011`,
-    Hindu = `Religion;Hindu;2011`,
-    Jewish = `Religion;Jewish;2011`,
-    Muslim = `Religion;Muslim;2011`,
-    Sikh = `Religion;Sikh;2011`,
-    Other_religion = `Religion;Other religion;2011`,
-    No_religion = `Religion;No religion;2011`,
-    Religion_not_stated = `Religion;Religion not stated;2011`
-  )
-
-# Convert relevant columns to numeric
-religion_2011 <- religion_2011 %>%
-  mutate(across(Christian:Religion_not_stated, as.numeric))
-
-# Revised function to determine the majority religion
-majority_religion <- function(Christian, Buddhist, Hindu, Jewish, Muslim, Sikh, Other_religion, No_religion, Religion_not_stated) {
-  # Create a named vector of religion counts
-  religion_counts <- c(
-    Christian = Christian,
-    Buddhist = Buddhist,
-    Hindu = Hindu,
-    Jewish = Jewish,
-    Muslim = Muslim,
-    Sikh = Sikh,
-    Other_religion = Other_religion,
-    No_religion = No_religion,
-    Religion_not_stated = Religion_not_stated
-  )
-  
-  # Remove NA values
-  religion_counts <- na.omit(religion_counts)
-  
-  # Check if there are any valid counts left
-  if (length(religion_counts) == 0) {
-    return("No data available")
-  }
-  
-  # Find the maximum count
-  max_count <- max(religion_counts)
-  
-  # Identify which religions have the maximum count
-  majority_religions <- names(religion_counts)[religion_counts == max_count]
-  
-  # Return the majority religion if there’s a clear winner
-  if (length(majority_religions) == 1) {
-    return(majority_religions)
-  } else {
-    return("No single majority")
-  }
-}
-
-library(dplyr)
-
-# Apply the function to each row
-religion_2011 <- religion_2011 %>%
-  rowwise() %>%
-  mutate(Majority_Religion = majority_religion(
-    Christian, Buddhist, Hindu, Jewish, Muslim, Sikh, Other_religion, No_religion, Religion_not_stated
-  )) %>%
-  ungroup()
-
-#Eliminate columns
-religion_2011 <- religion_2011[, -c(2, 3, 4, 5, 6, 7, 8, 9, 10)]
-
-# Define a function to get the most frequent religion
-most_frequent_religion <- function(religions) {
-  # Count the occurrences of each religion
-  counts <- table(religions)
-  
-  # Find the religion with the highest count
-  max_count <- max(counts)
-  most_frequent_religions <- names(counts)[counts == max_count]
-  
-  # Return the most frequent religion if there’s a clear winner
-  if (length(most_frequent_religions) == 1) {
-    return(most_frequent_religions)
-  } else {
-    return("No single majority")
-  }
-}
-
-merged_2011_religion <- religion_2011 %>%
-  left_join(lsoa, by = c("LSOA" = "LSOA11CD"))
-
-# Aggregate by MSOA and determine the most frequent majority religion
-aggregated_2011_religion <- merged_2011_religion %>%
-  group_by(MSOA11CD) %>%  # Use MSOA11CD or MSOA11NM for grouping
-  summarise(
-    Most_Frequent_Religion = most_frequent_religion(Majority_Religion),
-    .groups = 'drop'  # Drop the grouping structure
-  )
-
-# Join 2011 and 2001 religion
-religion_joined <- merged_2001_religion %>%
-  left_join(aggregated_2011_religion, by = "MSOA11CD")
-
-# Rename columns using rename()
-religion_joined  <- religion_joined  %>%
-  rename(
-    `2001` = `Majority_Religion`,
-    `2011` = `Most_Frequent_Religion`,
-  )
-```
-
-```{r}
-# Religion 2021
-
-# Rename the column 'Middle layer Super Output Areas Code' to 'msoa11cd'
-religion_2021 <- religion_2021 %>%
-  rename(msoa11cd = `Middle layer Super Output Areas Code`)
-
-# Print column names to verify
-print(names(religion_2021))
-
-# Filter out 'Does not apply' and find the majority religion for each MSOA
-majority_religion <- religion_2021 %>%
-  filter(`Religion (detailed) (58 categories)` != "Does not apply") %>%
-  group_by(msoa11cd) %>%
-  slice(which.max(Observation)) %>%
-  dplyr::select(msoa11cd, `Religion (detailed) (58 categories)`) %>%
-  rename(religion = `Religion (detailed) (58 categories)`)
-
-# join to shp
-final_religion <- religion_joined %>%
-  left_join(majority_religion, by = c("MSOA11CD" = "msoa11cd")) 
-
-# Rename columns 
-final_religion  <- final_religion  %>%
-  rename(
-    `2021` = `religion`,
-  )
-
-# Create a data frame with years 2011-2018
-years <- data.frame(year = 2011:2018)
-
-# Merge files
-expanded_religion <- merge(majority_religion, years)
-```
-
-```{r}
-# Interpolate religion
-
-library(dplyr)
-library(tidyr)
-library(stringr)
-
-# Convert data to long format
-religion_long <- final_religion %>%
-  pivot_longer(cols = starts_with("20"), names_to = "Year", values_to = "Religion") %>%
-  mutate(Year = as.numeric(Year))
-
-# Define the cleaning function
-clean_religion <- function(religion) {
-  parts <- str_split(religion, "[:.]")[[1]]
-  parts <- str_trim(parts)
-  unique_parts <- unique(parts)
-  return(unique_parts[1])
-}
-
-# Clean the religion column
-religion_cleaned <- religion_long %>%
-  mutate(Religion = sapply(Religion, clean_religion))
-
-library(zoo)
-
-# Fill missing values
-interpolated_data <- religion_cleaned %>%
-  group_by(MSOA11CD) %>%
-  arrange(Year) %>%
-  mutate(Religion = na.locf(Religion, na.rm = FALSE)) %>%
-  ungroup()
-
-# Generate all combinations of MSOA11CD and odd years
-years <- seq(2001, 2021, by = 2)
-msoa_codes <- unique(religion_cleaned$MSOA11CD)
-full_data <- expand.grid(MSOA11CD = msoa_codes, Year = years)
-
-# Merge with the existing data
-full_data <- full_data %>%
-  left_join(religion_cleaned, by = c("MSOA11CD", "Year"))
-
-# Interpolate missing religions using last observation carried forward (LOCF)
-interpolated_religion <- full_data %>%
-  group_by(MSOA11CD) %>%
-  arrange(Year) %>%
-  mutate(Religion = zoo::na.locf(Religion, na.rm = FALSE)) %>%
-  ungroup()
-
-```
-
-```{r}
-library(dplyr)
-
 greenery_df_cleaned <- greenery_df %>%
   rename(area = lb_code) %>%  # Rename lb_code to area
   dplyr::select(area, percent_green) %>%  # Select the desired columns
@@ -1627,7 +1002,7 @@ ptal_long <- msoa_ptal %>%
 library(dplyr)
 
 # Define the range of full years for interpolation
-full_years <- seq(2001, 2021, by = 1)
+full_years <- seq(2001, 2021, by = 2)
 
 # Interpolation function
 interpolate_ptal <- function(ptal_long) {
@@ -1697,144 +1072,6 @@ final_neighborhood_cleaner <- final_neighborhood_unique %>%
   dplyr::left_join(correct_geometry, by = c("MSOA11CD", "MSOA11NM"))
 
 neighborhood_cleanest <- na.omit(final_neighborhood_cleaner)
-```
-
-#### EDA
-
-```{r}
-# Changes in crime over time
-
-# Calculate the change in crime rate from the first to the last year for each MSOA
-crime_change <- neighborhood_cleanest %>%
-  group_by(MSOA11CD) %>%
-  summarize(change = last(MSOA_crime) - first(MSOA_crime))
-
-# Classify the change
-crime_change <- crime_change %>%
-  mutate(change_category = case_when(
-    change > 0 ~ "Increased",
-    change < 0 ~ "Decreased",
-    TRUE ~ "No Change"
-  ))
-
-# Merge with the spatial data
-neighborhood_cleanest <- left_join(neighborhood_cleanest, crime_change, by = "MSOA11CD")
-
-# Convert the 'geometry' column to an sf object, assuming WKT format
-neighborhood_cleanester <- st_as_sf(neighborhood_cleanest, crs = 27700)
-
-# Plot the map
-tm_shape(neighborhood_cleanester) +
-  tm_polygons("change_category", palette = c("red", "green", "grey"),
-              title = "Crime Rate Change") +
-  tm_layout(title = "Change in Crime Rates by MSOA")
-```
-
-```{r}
-# Green space
-
-# Use the most recent year for the green space percentage
-green_space <- neighborhood_cleanester %>%
-  filter(Year == max(Year))
-
-# Plot the map
-tm_shape(green_space) +
-  tm_polygons("MSOA_percent_green", palette = "Greens", title = "Percent Green Space") +
-  tm_layout(title = "Green Space Percentage by MSOA")
-```
-
-```{r}
-# PTAL
-
-# Use the most recent year for PTAL
-ptal_data <- neighborhood_cleanester %>%
-  filter(Year == max(Year))
-
-# Plot the map
-tm_shape(ptal_data) +
-  tm_polygons("PTAL", palette = "Blues", title = "PTAL Level") +
-  tm_layout(title = "Public Transport Accessibility Level by MSOA")
-
-```
-
-```{r}
-# Changes in crime
-
-# Filter data for specific years
-selected_years <- neighborhood_cleanester %>% filter(Year %in% c(2001, 2005, 2011, 2015, 2021))
-
-# Function to create map for a specific year
-create_map <- function(data, year) {
-  ggplot(data) +
-    geom_sf(aes(fill = MSOA_crime)) +
-    scale_fill_viridis_c() +
-    theme_minimal() +
-    ggtitle(paste("Crime Data for the Year", year)) +
-    theme(legend.position = "bottom")
-}
-
-# Loop through each year and plot
-for(year in c(2001, 2005, 2011, 2015, 2021)) {
-  map_data <- selected_years %>% filter(Year == year)
-  print(create_map(map_data, year))
-}
-
-```
-
-
-```{r}
-# Changes in religion
-
-# Function to plot religion distribution for a specific year
-plot_religion_map <- function(year) {
-  religion_data <- neighborhood_cleanester %>%
-    filter(Year == year)
-  
-  tm_shape(religion_data) +
-    tm_polygons("Religion", palette = "Set3", title = "Religion") +
-    tm_layout(title = paste("Religion Distribution in", year))
-}
-
-# Plot maps for the selected years
-plot_religion_map(2001)
-plot_religion_map(2005)
-plot_religion_map(2011)
-plot_religion_map(2015)
-plot_religion_map(2021)
-
-```
-
-```{r}
-# Correlation
-
-library(dplyr)
-library(corrplot)
-
-# Select the variables of interest for the correlation matrix
-df_selected <- neighborhood_cleanest %>%
-  dplyr::select(MSOA_crime, MSOA_percent_green, PTAL, Religion)
-
-# Convert 'Religion' to a numeric variable if it's categorical
-df_selected$Religion <- as.numeric(as.factor(df_selected$Religion))
-
-# Ensure all columns are numeric (if needed)
-df_selected <- df_selected %>%
-  mutate_if(is.character, as.numeric) %>%
-  mutate_if(is.factor, as.numeric)
-
-df_no_geometry <- df_selected %>%
-  st_drop_geometry()
-
-# Calculate the correlation matrix
-correlation_matrix <- cor(df_no_geometry, use = "complete.obs")
-
-# Print the correlation matrix
-print(correlation_matrix)
-
-library(corrplot)
-# Visualize the correlation matrix
-corrplot(correlation_matrix, method = "circle", type = "upper", order = "hclust",
-         tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.7)
 ```
 
 ## Download CSV

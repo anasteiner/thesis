@@ -1,0 +1,125 @@
+Stepwise Analysis:
+Helps evaluate the incremental effect of adding the policy and interaction terms.
+Control for Baseline:
+Ensures the policy effect is isolated after accounting for other key factors.
+Interpretability:
+Breaks down complex interactions into manageable components.
+
+Baseline Model:
+Captures the effects of housing variables and London-wide average Y
+Policy Model:
+Adds the policy dummy to test its direct effect on Y after controlling for baseline variables.
+Interaction Model:
+Adds interaction terms to explore whether the policy modifies the relationships between housing variables and 
+Y.
+
+```{r}
+# Required Libraries
+library(tidyverse)
+library(car) # For VIF and diagnostics
+library(stargazer) # For traditional regression tables
+
+# Define variables
+housing_indexes <- c("HousingIndex1", "HousingIndex2", "HousingIndex3", "HousingIndex4", "HousingIndex5") # Replace with actual housing index names
+policies <- c("Policy1", "Policy2", "Policy3", "Policy4", "Policy5") # Replace with actual policy dummy variable names
+housing_variables <- c("HousingIndex2", "HousingIndex3", "HousingIndex4", "HousingIndex5") # Other housing variables
+london_y <- "LondonAverageY" # Replace with column name for London-wide Y
+
+# Create output directories
+dir.create("progressive_regressions", showWarnings = FALSE)
+
+# Initialize results storage
+progressive_results <- list()
+diagnostic_metrics <- data.frame()
+
+# Loop through each housing index and its corresponding policy
+for (i in seq_along(housing_indexes)) {
+  # 1. Model 1: Baseline
+  formula_baseline <- as.formula(paste(
+    housing_indexes[i], "~", 
+    paste(housing_variables, collapse = " + "), "+", london_y
+  ))
+  model_baseline <- lm(formula_baseline, data = final_data_sf_sf)
+  
+  # 2. Model 2: Add Policy Dummy
+  formula_policy <- as.formula(paste(
+    housing_indexes[i], "~", 
+    paste(housing_variables, collapse = " + "), "+", london_y, "+", policies[i]
+  ))
+  model_policy <- lm(formula_policy, data = final_data_sf_sf)
+  
+  # 3. Model 3: Add Interaction Terms
+  interaction_terms <- paste(policies[i], housing_variables, sep = " * ")
+  formula_interaction <- as.formula(paste(
+    housing_indexes[i], "~", 
+    paste(housing_variables, collapse = " + "), "+", london_y, "+", policies[i], "+", 
+    paste(interaction_terms, collapse = " + ")
+  ))
+  model_interaction <- lm(formula_interaction, data = final_data_sf_sf)
+  
+  # Store models
+  progressive_results[[housing_indexes[i]]] <- list(
+    Baseline = model_baseline,
+    Policy = model_policy,
+    Interaction = model_interaction
+  )
+  
+  # Save model summaries as text files
+  write.table(summary(model_baseline), file = paste0("progressive_regressions/Regression_Baseline_", housing_indexes[i], ".txt"), sep = "\t")
+  write.table(summary(model_policy), file = paste0("progressive_regressions/Regression_Policy_", housing_indexes[i], ".txt"), sep = "\t")
+  write.table(summary(model_interaction), file = paste0("progressive_regressions/Regression_Interaction_", housing_indexes[i], ".txt"), sep = "\t")
+  
+  # Extract metrics for each model
+  metrics <- data.frame(
+    HousingIndex = housing_indexes[i],
+    Model = c("Baseline", "Policy", "Interaction"),
+    Adjusted_R2 = c(summary(model_baseline)$adj.r.squared, summary(model_policy)$adj.r.squared, summary(model_interaction)$adj.r.squared),
+    AIC = c(AIC(model_baseline), AIC(model_policy), AIC(model_interaction)),
+    RMSE = c(
+      sqrt(mean(model_baseline$residuals^2)),
+      sqrt(mean(model_policy$residuals^2)),
+      sqrt(mean(model_interaction$residuals^2))
+    )
+  )
+  diagnostic_metrics <- rbind(diagnostic_metrics, metrics)
+}
+
+# Save diagnostic metrics to CSV
+write.csv(diagnostic_metrics, "progressive_regressions/Diagnostic_Metrics.csv", row.names = FALSE)
+
+# Create regression tables
+for (i in seq_along(housing_indexes)) {
+  stargazer(
+    progressive_results[[housing_indexes[i]]][["Baseline"]],
+    progressive_results[[housing_indexes[i]]][["Policy"]],
+    progressive_results[[housing_indexes[i]]][["Interaction"]],
+    type = "html",
+    out = paste0("progressive_regressions/Progressive_Regressions_", housing_indexes[i], ".html"),
+    title = paste("Progressive Regression for", housing_indexes[i]),
+    column.labels = c("Baseline", "Policy Added", "Interaction Added"),
+    covariate.labels = c(housing_variables, london_y, policies[i]),
+    digits = 3,
+    star.cutoffs = c(0.05, 0.01, 0.001)
+  )
+}
+
+# Optional: Visualize Adjusted R^2 and RMSE trends
+library(ggplot2)
+
+# Adjusted R-squared
+ggplot(diagnostic_metrics, aes(x = Model, y = Adjusted_R2, color = HousingIndex, group = HousingIndex)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Adjusted R-squared Across Progressive Models", x = "Model", y = "Adjusted R-squared") +
+  theme_minimal() +
+  ggsave("progressive_regressions/Adjusted_R2_Trends.png", width = 8, height = 6)
+
+# RMSE
+ggplot(diagnostic_metrics, aes(x = Model, y = RMSE, color = HousingIndex, group = HousingIndex)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "RMSE Across Progressive Models", x = "Model", y = "RMSE") +
+  theme_minimal() +
+  ggsave("progressive_regressions/RMSE_Trends.png", width = 8, height = 6)
+```
+
