@@ -20,7 +20,7 @@ tenure_2021 <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal di
 private_rents <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/new rent.csv")
 affordable_budget <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/affordable budget.csv")
 price_london <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/price_london.csv")
-tenure_london <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/tenure_london.csv")
+tenure_FINAL <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/tenure_FINAL.csv")
 
 
 # Spatial data
@@ -386,78 +386,44 @@ grouped_data <- wide_tenure %>%
 
 # Add London data
 library(stringr)
-# Step 1: Remove the first row
-tenure_london <- tenure_london[-1, ]
 
-# Step 2: Remove all columns that start with "NA_..."
-tenure_london <- tenure_london %>%
-  select(-starts_with("NA_"))
+# Step 1: Rename columns 1 and 2
+tenure_FINAL <- tenure_FINAL %>%
+  rename(
+    MSOA11CD = 1,
+    MSOA11NM = 2
+  )
 
-colnames(tenure_london)
+tenure_FINAL <- tenure_FINAL %>%
+  mutate(across(
+    -c(MSOA11CD, MSOA11NM), # Skip the first two columns
+    ~ as.numeric(gsub("[^0-9.]", "", .)), # Remove non-numeric characters and convert to numeric
+    .names = "cleaned_{col}"
+  ))
 
-# Step 1: Extract years from "Own Outright" columns
-updated_colnames <- colnames(tenure_london)
-
-# Iterate through column names
-for (i in seq_along(updated_colnames)) {
-  if (str_detect(updated_colnames[i], "Own Outright_\\d{4}")) {
-    # Extract the year
-    year <- str_extract(updated_colnames[i], "\\d{4}")
-    
-    # Rename the corresponding columns
-    if ((i + 1) <= length(updated_colnames) && str_detect(updated_colnames[i + 1], "Buying with mortgage")) {
-      updated_colnames[i + 1] <- paste0("Buying with mortgage_", year)
-    }
-    if ((i + 2) <= length(updated_colnames) && str_detect(updated_colnames[i + 2], "Rented from Local Authority")) {
-      updated_colnames[i + 2] <- paste0("Rented from Local Authority or Housing Association_", year)
-    }
-    if ((i + 3) <= length(updated_colnames) && str_detect(updated_colnames[i + 3], "Rented from Private landlord")) {
-      updated_colnames[i + 3] <- paste0("Rented from Private landlord_", year)
-    }
-    if ((i + 4) <= length(updated_colnames) && str_detect(updated_colnames[i + 4], "Total_Total")) {
-      updated_colnames[i + 4] <- paste0("Total_Total_", year)
-    }
-  }
-}
-
-# Step 2: Assign updated column names back to the data
-colnames(tenure_london) <- updated_colnames
-
-# Step 3: Verify the updated column names
-print(colnames(tenure_london))
-
-tenure_london_filtered <- tenure_london %>%
-  filter(MSOA11NM == "London")
-
-tenure_london_long <- tenure_london_filtered %>%
+# Step 2: Convert to long format with a Year column
+tenure_LONG <- tenure_FINAL %>%
   pivot_longer(
-    cols = matches("_\\d{4}$"),     # Select columns ending with "_Year"
-    names_to = c("Category", "Year"), # Extract "Category" and "Year" from column names
-    names_pattern = "(.*)_(\\d{4})",  # Regex to split category and year
-    values_to = "Value"               # Values go into the "Value" column
-  ) %>%
-  pivot_wider(                       # Convert to wide format for separate columns
-    names_from = Category,           # Create new columns from categories
-    values_from = Value              # Values for these columns
+    cols = starts_with("20"), # Select columns starting with years
+    names_to = "Category_Year", # Create one column for year and category
+    values_to = "Value" # Place values here
   )
 
-tenure_london_final <- tenure_london_long %>%
+# Step 3: Calculate averages
+tenure_FINAL_long <- tenure_FINAL_long %>%
   mutate(
-    average_owned = (`Own Outright` + `Buying with mortgage`) / Total_Total,
-    average_rented = `Rented from Private landlord` / Total_Total,
-    average_social = `Rented from Local Authority or Housing Association` / Total_Total
-  ) %>%
-  select(  # Step 2: Keep only the required columns
-    MSOA11CD,
-    MSOA11NM,
-    Year,
-    average_owned,
-    average_rented,
-    average_social
+    average_owned = (`Own Outright` + `Buying with mortgage`) / Total,
+    average_rented = `Rented from Private landlord` / Total,
+    average_social = `Rented from Local Authority or Housing Association` / Total
   )
 
-tenure_london_final <- tenure_london_final %>%
-  mutate(Year = as.integer(Year))  # Convert Year to integer for consistency
+# Step 4: Filter to keep only row 34 (London information)
+tenure_FINAL_long_filtered <- tenure_FINAL_long %>%
+  filter(MSOA11CD == "E12000007")
+
+# Step 5: Keep only necessary columns
+tenure_FINAL_long_filtered <- tenure_FINAL_long_filtered %>%
+  select(MSOA11CD, MSOA11NM, Year, average_owned, average_rented, average_social)
 
 # Step 2: Define the complete range of years
 all_years <- 2001:2021
@@ -492,8 +458,8 @@ interpolated_tenure <- interpolated_tenure %>%
   )
 
 # Step 2: Rename Year to match `grouped_data`
-interpolated_tenure <- interpolated_tenure %>%
-  rename(year = Year)  # Rename Year to year for consistency
+grouped_data <- grouped_data %>%
+  rename(Year = year)  # Rename Year to year for consistency
 
 interpolated_tenure <- interpolated_tenure %>%
   mutate(geometry = st_sfc(st_geometrycollection(), crs = st_crs(grouped_data)))  # Set CRS
@@ -622,9 +588,6 @@ colnames(rents_cleaned) <- c(
   "2019 Q1"
 )
 
-# View the fixed dataset
-print(head(rents_cleaned))
-
 rents_cleaned <- rents_cleaned %>%
   mutate(across(starts_with("201"), ~ as.numeric(.)))
 
@@ -645,66 +608,65 @@ rents_cleaned_annual <- rents_cleaned %>%
   ungroup() %>%
   select(Code, Area, `2011`:`2019`) # Keep only the summarized years
 
-rents_cleaned <- rents_cleaned %>%
+rents_final <- rents_cleaned_annual %>%
   slice(-c(34:39, 41:44))
 
 # Step 1: Rename columns
-rents_cleaned <- rents_cleaned %>%
+rents_final <- rents_final %>%
   rename(LAD11CD = Code, LAD11NM = Area)
 
 # Step 2: Perform a full join with the MSOA shapefile data
-finals_rents <- full_join(msoa, rents_cleaned, by = c("LAD11CD", "LAD11NM"))
+finals_rents <- full_join(msoa, rents_final, by = c("LAD11CD", "LAD11NM"))
 
-finals_rents <- finals_rents %>%
+# Keeping only specific columns
+finals_rents <- finals_rents  %>%
+  select(MSOA11CD, MSOA11NM, geometry, Proportion, "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019")
+
+rents_long <- finals_rents %>%
+  pivot_longer(
+    cols = starts_with("201"),  # Columns representing years
+    names_to = "Year",          # New column for years
+    values_to = "Rent"          # New column for rent values
+  ) %>%
+  select(MSOA11CD, MSOA11NM, geometry, Proportion, Year, Rent)
+
+rents_long <- rents_long %>%
   mutate(
-    MSOA11CD = ifelse(LAD11CD == "E12000007", "London", MSOA11CD),
-    MSOA11NM = ifelse(LAD11CD == "E12000007", "London", MSOA11NM)
+    Rent = ifelse(
+      MSOA11CD == "London",
+      Rent,                             # Keep Rent unchanged for "London"
+      Rent * Proportion                 # Multiply Rent by Proportion for others
+    )
   )
 
-finals_rents <- finals_rents %>%
-  rowwise() %>%
-  mutate(
-    `2011` = sum(c_across(starts_with("numeric_2011 Q")), na.rm = TRUE),
-    `2012` = sum(c_across(starts_with("numeric_2012 Q")), na.rm = TRUE),
-    `2013` = sum(c_across(starts_with("numeric_2013 Q")), na.rm = TRUE),
-    `2014` = sum(c_across(starts_with("numeric_2014 Q")), na.rm = TRUE),
-    `2015` = sum(c_across(starts_with("numeric_2015 Q")), na.rm = TRUE),
-    `2016` = sum(c_across(starts_with("numeric_2016 Q")), na.rm = TRUE),
-    `2017` = sum(c_across(starts_with("numeric_2017 Q")), na.rm = TRUE),
-    `2018` = sum(c_across(starts_with("numeric_2018 Q")), na.rm = TRUE),
-    `2019` = sum(c_across(starts_with("numeric_2019 Q")), na.rm = TRUE)
-  ) %>%
-  ungroup()
-
-final_rents <- finals_rents %>%
-  select(MSOA11CD, MSOA11NM, geometry, Proportion, `2011`:`2019`)
-
-final_rents <- final_rents %>%
-  mutate(across(`2011`:`2019`, ~ ifelse(MSOA11NM != "London", .x * Proportion, .x))) %>%
+rents_long <- rents_long %>%
   select(-Proportion)
 
-final_rents_long <- final_rents %>%
-  pivot_longer(
-    cols = `2011`:`2019`,
-    names_to = "Year",
-    values_to = "Rent"
-  ) %>%
-  mutate(Year = as.numeric(Year))  # Ensure Year is numeric for interpolation
+rents_long <- rents_long %>%
+  mutate(Year = as.integer(Year)) 
 
-# Define the full range of years for interpolation
-full_years <- seq(2001, 2021)
+# Define all the years you want to interpolate
+all_years <- 2001:2021
 
-# Interpolate missing years for each MSOA11CD
-interpolated_rents <- final_rents_long %>%
-  group_by(MSOA11CD, MSOA11NM, geometry) %>%
-  complete(Year = full_years) %>%  # Add missing years
+# Perform interpolation for the Rent column
+interpolated_rents <- rents_long %>%
+  group_by(MSOA11CD, MSOA11NM) %>%
+  complete(Year = all_years) %>%  # Ensure all years are present
   arrange(Year) %>%
   mutate(
-    Rent = zoo::na.approx(Rent, x = Year, na.rm = FALSE),  # Linear interpolation
-    Rent = if_else(is.na(Rent), zoo::na.locf(Rent, na.rm = FALSE, fromLast = FALSE), Rent),  # Fill leading NAs
-    Rent = if_else(is.na(Rent), zoo::na.locf(Rent, na.rm = FALSE, fromLast = TRUE), Rent)   # Fill trailing NAs
+    Rent = if (sum(!is.na(Rent)) > 1) {
+      approx(
+        x = Year[!is.na(Rent)], 
+        y = Rent[!is.na(Rent)], 
+        xout = Year, 
+        rule = 2
+      )$y
+    } else {
+      Rent  # Keep Rent unchanged if not enough data for interpolation
+    }
   ) %>%
   ungroup()
+
 ```
 
 ## Dummie policy data
@@ -763,7 +725,9 @@ datasets <- list(
 )
 
 filtered_datasets <- lapply(datasets, function(data) {
-  data %>% filter(Year %% 2 != 0) # Keep only odd years
+  data %>%
+    mutate(Year = as.numeric(as.character(Year))) %>% # Ensure Year is numeric
+    filter(Year %% 2 != 0)                            # Keep only odd years
 })
 
 # Assign filtered datasets back to their original names
@@ -815,22 +779,32 @@ accommodation_with_london <- standardized_datasets[[5]]
 
 # Step 3: Full join all datasets
 joined_data <- interpolated_rents %>%
-  st_join(final_budget, join = st_intersects) %>%  # Spatial join based on geometries
-  st_join(final_tenancy, join = st_intersects) %>%
-  st_join(combined_houseprice, join = st_intersects) %>%
-  st_join(accommodation_with_london, join = st_intersects)
+  st_drop_geometry() %>%
+  left_join(st_drop_geometry(final_budget), by = c("MSOA11CD", "Year")) %>%
+  left_join(st_drop_geometry(final_tenancy), by = c("MSOA11CD", "Year")) %>%
+  left_join(st_drop_geometry(combined_houseprice), by = c("MSOA11CD", "Year")) %>%
+  left_join(st_drop_geometry(accommodation_with_london), by = c("MSOA11CD", "Year"))
 
+cleaned_housing <- joined_data %>%
+  # Rename and select only the unique columns
+  select(
+    MSOA11CD,
+    MSOA11NM = MSOA11NM.x,
+    Year,
+    Rent,
+    budget_proportion,
+    average_owned,
+    average_rented,
+    average_social,
+    Houseprice,
+    Occupation
+  )
 ```
 
 ## Download CSV..
 ```{r}
-# Remove the geometry column from the data frame
-joined_data <- as.data.frame(joined_data)
-housing_no_geo$geometry <- NULL
-
-
 # Write the cleaned data frame to a CSV file
-write.csv(housing_no_geo, "housing_data.csv", row.names = FALSE)
+write.csv(cleaned_housing, "housing_data.csv", row.names = FALSE)
 ```
 
 ## Neighborhood data
@@ -1046,42 +1020,19 @@ neighborhood_clean <- neighborhood_clean %>%
   dplyr::select(-`MSOA11CD.y`) %>%
   dplyr::rename(MSOA11CD = `MSOA11CD.x`)
 
-final_neighborhood <- neighborhood_clean %>%
-  full_join(interpolated_religion, by = c("MSOA11CD", "Year"))
-
-final_neighborhood_unique <- final_neighborhood %>%
+final_neighborhood_unique <- neighborhood_clean%>%
   group_by(MSOA11CD, Year) %>%
   slice(1) %>%  # or use distinct() if all other columns are the same
   ungroup()
 
 final_neighborhood_clean <- final_neighborhood_unique %>%
   drop_na()
-
-library(dplyr)
-# Filter out rows with empty geometries and select the first occurrence of each unique MSOA11NM
-correct_geometry <- final_neighborhood_unique %>%
-  dplyr::filter(!grepl("EMPTY", geometry)) %>%
-  dplyr::group_by(MSOA11CD, MSOA11NM) %>%
-  dplyr::slice(1) %>%  # Choose the first occurrence of non-empty geometry
-  dplyr::ungroup() %>%
-  dplyr::select(MSOA11CD, MSOA11NM, geometry)
-
-# Join the correct geometry back to the main data frame
-final_neighborhood_cleaner <- final_neighborhood_unique %>%
-  dplyr::select(-geometry) %>%  # Remove the existing geometry column
-  dplyr::left_join(correct_geometry, by = c("MSOA11CD", "MSOA11NM"))
-
-neighborhood_cleanest <- na.omit(final_neighborhood_cleaner)
 ```
 
 ## Download CSV
 ```{r}
-# Remove the geometry column from the data frame
-neighborhood_no_geo <- as.data.frame(neighborhood_cleanester)
-neighborhood_no_geo$geometry <- NULL
-
 # Write the cleaned data frame to a CSV file
-write.csv(neighborhood_no_geo, "neighborhood_data.csv", row.names = FALSE)
+write.csv(final_neighborhood_clean, "neighborhood_data.csv", row.names = FALSE)
 ```
 
 
