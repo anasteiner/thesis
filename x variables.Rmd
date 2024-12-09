@@ -799,6 +799,36 @@ cleaned_housing <- joined_data %>%
     Houseprice,
     Occupation
   )
+
+# Define the data you want to insert
+manual_values <- tibble(
+  MSOA11CD = "London",
+  MSOA11NM = "London",
+  Year = c(2001, 2003, 2005, 2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021),
+  average_owned = c(0.5557597, 0.5557597, 0.5557597, 0.5534036, 0.5322169, 0.5061974, 
+                    0.5193679, 0.5167916, 0.5241732, 0.5064820, 0.5459837),
+  average_rented = c(0.18802592, 0.18802592, 0.18802592, 0.19389581, 0.22340161, 
+                     0.24892051, 0.24442112, 0.24791433, 0.25317208, 0.26583293, 0.24447031),
+  average_social = c(0.25621433, 0.25621433, 0.25621433, 0.25270054, 0.24438150, 
+                     0.24485105, 0.23621099, 0.23529412, 0.22265474, 0.22765647, 0.20954598)
+)
+
+# Update the relevant rows in cleaned_housing
+cleaned_housing <- cleaned_housing %>%
+  mutate(
+    average_owned = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
+                           manual_values$average_owned[match(Year, manual_values$Year)], 
+                           average_owned),
+    average_rented = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
+                            manual_values$average_rented[match(Year, manual_values$Year)], 
+                            average_rented),
+    average_social = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
+                            manual_values$average_social[match(Year, manual_values$Year)], 
+                            average_social)
+  )
+
+
+
 ```
 
 ## Download CSV..

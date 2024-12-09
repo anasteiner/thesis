@@ -21,72 +21,60 @@ library(zoo)
 
 ```{r}
 # Read the datasets
-setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code")
-census_data <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code/census_data.csv")
-housing_data <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code/ffinal_housing_cleaned.csv")
-neighborhood_data <- read_csv("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Code/neighborhood_data.csv")
+setwd("/Users/anamariasteinercorrea/thesis")
+census_data <- read_csv("/Users/anamariasteinercorrea/thesis/census_data.csv")
+housing_data <- read_csv("/Users/anamariasteinercorrea/thesis/housing_data.csv")
+neighborhood_data <- read_csv("/Users/anamariasteinercorrea/thesis/neighborhood_data.csv")
 msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
 ```
 
 ## Clean and join datasets
 
 ```{r}
-# Perform the join 
-combined_data <- neighborhood_data %>%
-  left_join(housing_data, by = c("MSOA11CD", "Year", "MSOA11NM"))
+# Perform the join of housing + neighborhood
+hn_data <- housing_data %>%
+  left_join(neighborhood_data, by = c("MSOA11NM", "MSOA11CD", "Year"))
+```
 
-library(tidyr)
-
-# Pivot census_data to wide format, separating columns by Nationality
-census_data_wide <- census_data %>%
-  pivot_wider(
-    names_from = Nationality, 
-    values_from = c(Proportion, Dissimilarity_Index, H, Isolation_Index)
-  )
-
-# Perform the join 
-final_data <- combined_data %>%
-  left_join(census_data_wide, by = c("MSOA11CD", "Year", "MSOA11NM"))
+```{r}
+# Perform the join of housing + neighborhood + segregation
+segregation_analysis <- hn_data %>%
+  left_join(census_data, by = c("MSOA11NM", "MSOA11CD", "Year"))
 ```
 
 ```{r}
 # Join with spatial data
-final_data_sf <- final_data %>%
-  left_join(msoa_geometry, by = c("MSOA11CD", "MSOA11NM"))
+segregation_final <- segregation_analysis %>%
+  left_join(msoa %>% distinct(MSOA11CD, MSOA11NM, .keep_all = TRUE), 
+            by = c("MSOA11CD", "MSOA11NM"))
 
 # Convert to sf object
-final_data_sf <- st_as_sf(final_data_sf)
-```
+segregation_sf <- st_as_sf(segregation_final)
 
-```{r}
-# Clean rows and columns
-
-# Print all column names of final_data_sf
-print(colnames(final_data_sf))
-
-# Drop columns by index
-final_data_sf <- final_data_sf[, -c(8, 9, 17, 24, 31, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48)]
-
-# Remove rows with any NA values
-final_data_sf <- na.omit(final_data_sf)
-```
-
-```{r}
-# Verify if the data is already an sf object
-if (inherits(final_data_sf, "sf")) {
-  final_data_sf_sf <- final_data_sf
-} else {
-  # Check if the geometry column is in a format that can be converted to sf
-  if ("geometry" %in% colnames(final_data_sf)) {
-    if (inherits(final_data_sf$geometry, "sfc_MULTIPOLYGON")) {
-      final_data_sf_sf <- st_as_sf(final_data_sfa)
-    } else {
-      final_data_sf_sf <- st_as_sf(final_data_sf, wkt = "geometry", crs = 27700)
-    }
-  } else {
-    stop("The geometry column is not in a recognizable format.")
-  }
-}
+# Clean the dataset
+final_segregation <- segregation_sf %>%
+  # Select only the necessary columns and rename them
+  select(
+    MSOA11CD,
+    MSOA11NM,
+    Year,
+    Rent,
+    budget_proportion,
+    average_owned,
+    average_rented,
+    average_social,
+    Houseprice,
+    Occupation,
+    geometry = geometry.y,
+    MSOA_crime,
+    MSOA_percent_green,
+    PTAL,
+    Nationality,
+    Dissimilarity_Index,
+    lagged_diss = lagged_diss.y,
+    H,
+    Isolation_Index,
+  ) 
 ```
 
 ## Question 1: How do housing characteristics affect segregation?
@@ -97,31 +85,38 @@ To visualize the instantaneous relationships between each housing variable and t
 ```{r}
 # Define nationalities and housing variables
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-housing_variables <- c("HousingIndex", "RentPrice", "Tenancy", "OwnershipRate", "VacancyRate") # Replace with actual variable names
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice")
 
 # Create directories for scatterplots
 dir.create("scatter_plots", showWarnings = FALSE)
 
-# 1. Scatterplots for each nationality and housing variable
+install.packages("ggplot2")
+library(ggplot2)
+
+# Loop through nationalities and housing variables to create scatterplots
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_data_sf_sf %>% filter(Nationality == nationality)
+  nationality_data <- final_segregation %>% filter(Nationality == nationality)
   
   for (housing_var in housing_variables) {
     # Create scatterplot
-    scatter_plot <- ggplot(nationality_data, aes_string(x = housing_var, y = paste0("Dissimilarity_Index_", nationality))) +
+    scatter_plot <- ggplot(nationality_data, aes_string(x = housing_var, y = "Dissimilarity_Index")) +
       geom_point(color = "blue", alpha = 0.5) +
       geom_smooth(method = "lm", color = "red", se = FALSE) +
       labs(
-        title = paste("Scatter Plot: ", housing_var, " vs Dissimilarity Index - ", nationality, sep = ""),
+        title = paste("Scatter Plot:", housing_var, "vs Dissimilarity Index -", nationality),
         x = housing_var,
-        y = paste("Dissimilarity Index -", nationality)
+        y = "Dissimilarity Index"
       ) +
       theme_minimal()
     
     # Save scatterplot
-    ggsave(filename = paste0("scatter_plots/Scatter_", nationality, "_", housing_var, ".png"), 
-           plot = scatter_plot, width = 8, height = 6)
+    ggsave(
+      filename = paste0("scatter_plots/Scatter_", nationality, "_", housing_var, ".png"), 
+      plot = scatter_plot, 
+      width = 8, 
+      height = 6
+    )
   }
 }
 ```
@@ -129,29 +124,50 @@ for (nationality in nationalities) {
 ## Correlation matrix
 To summarize the strength and direction of pairwise relationships between all housing variables and the Dissimilarity Index for each nationality.
 ```{r}
- Directory for correlation matrices
+# Load required libraries
+library(dplyr)
+
+# Define nationalities
+nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
+
+# Directory for correlation matrices
 dir.create("correlation_matrices", showWarnings = FALSE)
 
+install.packages("ggcorrplot")
+library(ggcorrplot)
+
+# Loop through nationalities to generate correlation matrices
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_data_sf_sf %>% filter(Nationality == nationality)
+  nationality_data <- final_segregation %>% filter(Nationality == nationality)
   
-  # Select relevant columns for the correlation matrix
+  # Drop the geometry column using st_drop_geometry()
   relevant_data <- nationality_data %>%
-    select(c("HousingIndex", "RentPrice", "Tenancy", "OwnershipRate", "VacancyRate", 
-             paste0("Dissimilarity_Index_", nationality)))
+    st_drop_geometry() %>%  # Drop geometry column
+    select(c("Rent", "budget_proportion", "average_owned", "average_rented", 
+             "average_social", "Houseprice", "Occupation", "Dissimilarity_Index")) %>%
+    mutate(across(where(is.character), as.numeric))  # Convert character columns to numeric
   
-  # Compute correlation matrix
-  cor_matrix <- cor(relevant_data, use = "complete.obs")
+  # Ensure all columns are numeric
+  numeric_data <- relevant_data %>%
+    select(where(is.numeric))  # Keep only numeric columns
   
-  # Visualize correlation matrix as a heatmap
-  cor_plot <- ggcorrplot(cor_matrix, method = "circle", type = "lower", lab = TRUE, 
-                         title = paste("Correlation Matrix -", nationality),
-                         colors = c("blue", "white", "red"))
-  
-  # Save the correlation matrix plot
-  ggsave(filename = paste0("correlation_matrices/Correlation_", nationality, ".png"), 
-         plot = cor_plot, width = 8, height = 6)
+  # Check if there are enough numeric columns and rows
+  if (ncol(numeric_data) > 1 && nrow(numeric_data) > 1) {
+    # Compute correlation matrix
+    cor_matrix <- cor(numeric_data, use = "complete.obs")
+    
+    # Visualize correlation matrix as a heatmap
+    cor_plot <- ggcorrplot(cor_matrix, method = "circle", type = "lower", lab = TRUE, 
+                           title = paste("Correlation Matrix -", nationality),
+                           colors = c("blue", "white", "red"))
+    
+    # Save the correlation matrix plot
+    ggsave(filename = paste0("correlation_matrices/Correlation_", nationality, ".png"), 
+           plot = cor_plot, width = 8, height = 6)
+  } else {
+    message(paste("Skipping nationality:", nationality, "- insufficient numeric data for correlation."))
+  }
 }
 ```
 
@@ -163,7 +179,7 @@ library(tidyverse)
 
 # Define nationalities and housing variables
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-housing_variables <- c("HousingIndex", "RentPrice", "Tenancy", "OwnershipRate", "VacancyRate") # Replace with your actual variable names
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice", "Occupation")
 
 # Create a directory to save CCF plots if it doesn't exist
 dir.create("ccf_plots", showWarnings = FALSE)
@@ -171,26 +187,34 @@ dir.create("ccf_plots", showWarnings = FALSE)
 # Loop over nationalities and housing variables
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_data_sf_sf %>% filter(Nationality == nationality)
+  nationality_data <- final_segregation %>% filter(Nationality == nationality)
   
   # Ensure data is sorted by Year
-  nationality_data <- nationality_data %>% arrange(Year)
+  nationality_data <- nationality_data %>% mutate(Year = as.numeric(Year)) %>% arrange(Year)
   
   # Extract the segregation index as the time series (dependent variable)
-  segregation_ts <- ts(nationality_data[[paste0("Dissimilarity_Index_", nationality)]], 
-                       start = min(nationality_data$Year), frequency = 1)
+  segregation_ts <- ts(nationality_data$Dissimilarity_Index, start = min(nationality_data$Year), frequency = 1)
   
   for (housing_var in housing_variables) {
     # Extract the housing variable as the time series (independent variable)
     housing_ts <- ts(nationality_data[[housing_var]], start = min(nationality_data$Year), frequency = 1)
     
-    # Calculate and plot CCF
-    ccf_plot <- ccf(housing_ts, segregation_ts, lag.max = 5, 
-                    main = paste("CCF:", housing_var, "vs Dissimilarity Index -", nationality))
+    # Check for and handle missing values
+    if (anyNA(segregation_ts) || anyNA(housing_ts)) {
+      # Filter out rows with NA values in either series
+      valid_data <- nationality_data %>% 
+        filter(!is.na(Dissimilarity_Index) & !is.na(.data[[housing_var]]))
+      
+      # Recreate the time series with non-NA values
+      segregation_ts <- ts(valid_data$Dissimilarity_Index, start = min(valid_data$Year), frequency = 1)
+      housing_ts <- ts(valid_data[[housing_var]], start = min(valid_data$Year), frequency = 1)
+    }
     
-    # Save the CCF plot
-    ggsave(filename = paste0("ccf_plots/CCF_", nationality, "_", housing_var, ".png"), 
-           plot = ccf_plot, width = 8, height = 6)
+    # Save the CCF plot as an image
+    png(filename = paste0("ccf_plots/CCF_", nationality, "_", housing_var, ".png"), width = 800, height = 600)
+    ccf(housing_ts, segregation_ts, lag.max = 5, 
+        main = paste("CCF:", housing_var, "vs Dissimilarity Index -", nationality))
+    dev.off()
   }
 }
 ```
@@ -202,134 +226,96 @@ Incorporate the lagged settlement variable alongside all housing variables to ca
 ##No. 7 Neighborhood data
 Add neighborhood-level variables to create a comprehensive model.
 ```{r}
+# Load required libraries
+library(tidyverse)
+library(car) 
+install.packages("stargazer")
+library(stargazer)
+install.packages("sjPlot")
+library(sjPlot)    # For styled regression tables
+
 # Define variables
-housing_variables <- c("HousingIndex", "RentPrice", "Tenancy", "OwnershipRate", "VacancyRate") # Replace with actual names
-neighborhood_variables <- c("NeighborhoodFactor1", "NeighborhoodFactor2", "NeighborhoodFactor3") # Replace with actual names
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice", "Occupation")
+neighborhood_variables <- c("MSOA_crime", "MSOA_percent_green", "PTAL")
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
 
-# Create directory for output
+# Create directory for regression outputs
 dir.create("regression_outputs", showWarnings = FALSE)
 
 # Loop over nationalities
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_data_sf_sf %>% filter(Nationality == nationality)
+  nationality_data <- final_segregation %>% filter(Nationality == nationality)
+  
+  # Drop geometry column
+  numeric_data <- st_drop_geometry(nationality_data)
+  
+  # Handle missing values
+  numeric_data <- numeric_data %>% filter(complete.cases(select(., all_of(c(housing_variables, neighborhood_variables, "lagged_diss")))))
   
   # Scale continuous variables
-  scaled_data <- nationality_data %>%
-    mutate(across(all_of(c(housing_variables, neighborhood_variables, "LaggedSettlement")), scale))
+  scaled_data <- numeric_data %>%
+    mutate(across(all_of(c(housing_variables, neighborhood_variables, "lagged_diss")), scale, .names = "scaled_{.col}"))
   
   # Define dependent variable
-  y_variable <- paste0("Dissimilarity_Index_", nationality)
+  y_variable <- "Dissimilarity_Index"
   
   # Initialize list to store models
   models <- list()
   
-  # 1. Run regressions for individual housing variables
-  for (i in seq_along(housing_variables)) {
-    formula <- as.formula(paste(y_variable, "~", housing_variables[i]))
+  # 1. Regressions for individual housing variables
+  for (housing_var in housing_variables) {
+    formula <- as.formula(paste(y_variable, "~", paste0("scaled_", housing_var)))
     model <- lm(formula, data = scaled_data)
-    models[[paste0("Housing_", housing_variables[i])]] <- model
+    models[[paste0("Housing_", housing_var)]] <- model
   }
   
-  # 2. Add lagged settlement (6th model)
-  lagged_formula <- as.formula(paste(y_variable, "~", paste(housing_variables, collapse = " + "), "+ LaggedSettlement"))
+  # 2. Model with lagged settlement
+  lagged_formula <- as.formula(paste(y_variable, "~", 
+                                     paste(paste0("scaled_", housing_variables), collapse = " + "), 
+                                     "+ scaled_lagged_diss"))
   models[["WithLaggedSettlement"]] <- lm(lagged_formula, data = scaled_data)
   
-  # 3. Add neighborhood factors (7th model)
+  # 3. Full model with neighborhood variables
   full_formula <- as.formula(paste(y_variable, "~", 
-                                   paste(housing_variables, collapse = " + "), 
-                                   "+ LaggedSettlement +", 
-                                   paste(neighborhood_variables, collapse = " + ")))
+                                   paste(paste0("scaled_", housing_variables), collapse = " + "), 
+                                   "+ scaled_lagged_diss +", 
+                                   paste(paste0("scaled_", neighborhood_variables), collapse = " + ")))
   models[["FullModel"]] <- lm(full_formula, data = scaled_data)
   
   # Check for multicollinearity in the full model
   vif_values <- vif(models[["FullModel"]])
-  print(vif_values) # Check if VIF > 5–10, which indicates multicollinearity
+  print(vif_values)  # Check if VIF > 5–10
   
-  # Diagnostics for the full model
-  par(mfrow = c(2, 2)) # Set up a 2x2 layout
-  plot(models[["FullModel"]]) # Residual plots, QQ plot, leverage
-  
-  # Save diagnostics to a PDF
+  # Save diagnostics plots
   pdf(file = paste0("regression_outputs/Diagnostics_", nationality, "_FullModel.pdf"))
-  plot(models[["FullModel"]])
+  par(mfrow = c(2, 2))
+  plot(models[["FullModel"]])  # Residuals, QQ, leverage
   dev.off()
   
-  # Compare models using a traditional table (stargazer or sjPlot)
-  stargazer(models, 
-            type = "html", 
-            out = paste0("regression_outputs/RegressionSummary_", nationality, ".html"), 
-            title = paste("Regression Results for", nationality), 
-            digits = 3, 
-            star.cutoffs = c(0.05, 0.01, 0.001), 
-            report = "vcstp") # v = coefficients, c = confidence intervals, s = significance, t = t-statistics, p = p-values
+  # Generate regression tables
+  try({
+    stargazer(models, 
+              type = "html", 
+              out = paste0("regression_outputs/RegressionSummary_", nationality, ".html"), 
+              title = paste("Regression Results for", nationality), 
+              digits = 3, 
+              star.cutoffs = c(0.05, 0.01, 0.001))
+  }, silent = TRUE)
   
-  # Alternatively, use sjPlot for a styled regression table
-  tab_model(models, 
-            file = paste0("regression_outputs/RegressionSummary_", nationality, "_Styled.html"), 
-            show.ci = TRUE, show.std = TRUE, dv.labels = paste("Dissimilarity Index -", nationality))
+  # Styled regression table
+  try({
+    tab_model(models, 
+              file = paste0("regression_outputs/RegressionSummary_", nationality, "_Styled.html"), 
+              show.ci = TRUE, show.std = TRUE, dv.labels = paste("Dissimilarity Index -", nationality))
+  }, silent = TRUE)
 }
 ```
 
 # GWR with best regression model
 Explores spatial variations in these relationships, revealing local heterogeneity.
 ```{r}
-# Required Libraries
-library(sf)
-library(spgwr)
-library(tidyverse)
 
-# Define variables
-nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-best_formula <- paste("Dissimilarity_Index ~ HousingIndex + RentPrice + Tenancy + LaggedSettlement") # Adjust as needed
-
-# Load London polygon data (in CRS compatible with your GWR tools)
-london_data <- st_read("london_msoa_polygons.shp") # Replace with your shapefile path
-st_crs(london_data) <- 27700 # London CRS (British National Grid, EPSG: 27700)
-
-# Prepare the dataset for all years and all nationalities
-# Ensure repeated geometries are merged with long-format data
-spatial_data <- final_data_sf_sf %>%
-  left_join(london_data, by = "msoa11cd") %>%
-  st_as_sf()
-
-# Loop over nationalities
-for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- spatial_data %>% filter(Nationality == nationality)
-  
-  # Ensure spatial features are included and valid
-  nat_data <- nat_data %>% st_make_valid()
-  
-  # Convert to Spatial* object (required by spgwr)
-  nat_spatial <- as(nat_data, "Spatial")
-  
-  # Bandwidth selection (adaptive GWR)
-  bandwidth <- gwr.sel(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), gweight = gwr.Gauss)
-  
-  # Run GWR
-  gwr_model <- gwr(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), bandwidth = bandwidth, gweight = gwr.Gauss, fit.points = TRUE)
-  
-  # Extract GWR results
-  gwr_results <- as.data.frame(gwr_model$SDF)
-  
-  # Save results back to spatial data
-  nat_data <- cbind(nat_data, gwr_results)
-  
-  # Save GWR output to a shapefile
-  st_write(nat_data, paste0("gwr_outputs/GWR_", nationality, ".shp"), delete_dsn = TRUE)
-  
-  # Visualize GWR coefficient maps for selected predictors
-  for (variable in c("HousingIndex", "RentPrice", "Tenancy", "LaggedSettlement")) {
-    ggplot(nat_data) +
-      geom_sf(aes_string(fill = variable), color = NA) +
-      scale_fill_viridis_c() +
-      labs(title = paste("GWR Coefficient Map for", variable, "(", nationality, ")"), fill = "Coefficient") +
-      theme_minimal() +
-      ggsave(paste0("gwr_outputs/GWR_Coefficient_", nationality, "_", variable, ".png"), width = 8, height = 6)
-  }
-}
 ```
 
 # Diagnostico
