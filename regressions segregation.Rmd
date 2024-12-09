@@ -315,7 +315,78 @@ for (nationality in nationalities) {
 # GWR with best regression model
 Explores spatial variations in these relationships, revealing local heterogeneity.
 ```{r}
+# Required Libraries
+library(sf)
+install.packages("spgwr")
+library(spgwr)
+library(tidyverse)
 
+# Define variables
+nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
+best_formula <- paste("Dissimilarity_Index ~ Rent + budget_proportion + average_owned + average_rented + average_social + Houseprice + LaggedSettlement + Occupation")
+
+# Ensure directory for GWR outputs
+dir.create("gwr_outputs", showWarnings = FALSE)
+
+# Deduplicate geometries
+unique_geometries <- final_segregation %>%
+  select(MSOA11CD, geometry) %>%
+  distinct() # Retain only unique geometries
+
+# Loop over nationalities
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- final_segregation %>%
+    filter(Nationality == nationality) %>%
+    filter(!is.na(geometry)) %>%  # Ensure spatial features are present
+    group_by(MSOA11CD) %>%
+    summarize(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop") %>%
+    left_join(unique_geometries, by = "MSOA11CD") %>% # Add unique geometries
+    st_make_valid() # Ensure valid geometries
+  
+  # Convert to Spatial* object (required by spgwr)
+  nat_spatial <- as(nat_data, "Spatial")
+  
+  # Bandwidth selection (adaptive GWR)
+  bandwidth <- gwr.sel(
+    as.formula(best_formula),
+    data = nat_spatial,
+    coords = coordinates(nat_spatial),
+    gweight = gwr.Gauss
+  )
+  
+  # Run GWR
+  gwr_model <- gwr(
+    as.formula(best_formula),
+    data = nat_spatial,
+    coords = coordinates(nat_spatial),
+    bandwidth = bandwidth,
+    gweight = gwr.Gauss,
+    fit.points = TRUE
+  )
+  
+  # Extract GWR results
+  gwr_results <- as.data.frame(gwr_model$SDF)
+  
+  # Save results back to spatial data
+  nat_data <- cbind(nat_data, gwr_results)
+  
+  # Save GWR output to a shapefile
+  st_write(nat_data, paste0("gwr_outputs/GWR_", nationality, ".shp"), delete_dsn = TRUE)
+  
+  # Visualize GWR coefficient maps for selected predictors
+  for (variable in c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice", "LaggedSettlement")) {
+    ggplot(nat_data) +
+      geom_sf(aes_string(fill = variable), color = NA) +
+      scale_fill_viridis_c() +
+      labs(
+        title = paste("GWR Coefficient Map for", variable, "(", nationality, ")"),
+        fill = "Coefficient"
+      ) +
+      theme_minimal() +
+      ggsave(paste0("gwr_outputs/GWR_Coefficient_", nationality, "_", variable, ".png"), width = 8, height = 6)
+  }
+}
 ```
 
 # Diagnostico
