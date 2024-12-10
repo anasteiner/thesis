@@ -75,6 +75,9 @@ final_segregation <- segregation_sf %>%
     H,
     Isolation_Index,
   ) 
+
+filtered_segregation<- final_segregation %>%
+  filter(MSOA11NM != "London")
 ```
 
 ## Question 1: How do housing characteristics affect segregation?
@@ -85,7 +88,7 @@ To visualize the instantaneous relationships between each housing variable and t
 ```{r}
 # Define nationalities and housing variables
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice")
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "lagged_diss")
 
 # Create directories for scatterplots
 dir.create("scatter_plots", showWarnings = FALSE)
@@ -96,7 +99,7 @@ library(ggplot2)
 # Loop through nationalities and housing variables to create scatterplots
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_segregation %>% filter(Nationality == nationality)
+  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
   
   for (housing_var in housing_variables) {
     # Create scatterplot
@@ -139,13 +142,12 @@ library(ggcorrplot)
 # Loop through nationalities to generate correlation matrices
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_segregation %>% filter(Nationality == nationality)
+  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
   
   # Drop the geometry column using st_drop_geometry()
   relevant_data <- nationality_data %>%
     st_drop_geometry() %>%  # Drop geometry column
-    select(c("Rent", "budget_proportion", "average_owned", "average_rented", 
-             "average_social", "Houseprice", "Occupation", "Dissimilarity_Index")) %>%
+    select(c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "Dissimilarity_Index", "lagged_diss")) %>%
     mutate(across(where(is.character), as.numeric))  # Convert character columns to numeric
   
   # Ensure all columns are numeric
@@ -179,7 +181,7 @@ library(tidyverse)
 
 # Define nationalities and housing variables
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice", "Occupation")
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "lagged_diss")
 
 # Create a directory to save CCF plots if it doesn't exist
 dir.create("ccf_plots", showWarnings = FALSE)
@@ -187,7 +189,7 @@ dir.create("ccf_plots", showWarnings = FALSE)
 # Loop over nationalities and housing variables
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_segregation %>% filter(Nationality == nationality)
+  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
   
   # Ensure data is sorted by Year
   nationality_data <- nationality_data %>% mutate(Year = as.numeric(Year)) %>% arrange(Year)
@@ -235,7 +237,7 @@ install.packages("sjPlot")
 library(sjPlot)    # For styled regression tables
 
 # Define variables
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice", "Occupation")
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation")
 neighborhood_variables <- c("MSOA_crime", "MSOA_percent_green", "PTAL")
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
 
@@ -245,7 +247,7 @@ dir.create("regression_outputs", showWarnings = FALSE)
 # Loop over nationalities
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- final_segregation %>% filter(Nationality == nationality)
+  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
   
   # Drop geometry column
   numeric_data <- st_drop_geometry(nationality_data)
@@ -323,30 +325,31 @@ library(tidyverse)
 
 # Define variables
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-best_formula <- paste("Dissimilarity_Index ~ Rent + budget_proportion + average_owned + average_rented + average_social + Houseprice + LaggedSettlement + Occupation")
+best_formula <- paste("Dissimilarity_Index ~ Rent + budget_proportion + average_owned + Houseprice + lagged_diss + Occupation + MSOA_crime + MSOA_percent_green + PTAL")
 
 # Ensure directory for GWR outputs
 dir.create("gwr_outputs", showWarnings = FALSE)
 
-# Deduplicate geometries
-unique_geometries <- final_segregation %>%
+# Deduplicate geometries (prepare unique geometries for MSOAs)
+unique_geometries <- filtered_segregation %>%
   select(MSOA11CD, geometry) %>%
-  distinct() # Retain only unique geometries
+  distinct()  # Retain only unique geometries
 
 # Loop over nationalities
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nat_data <- final_segregation %>%
+  nat_data <- filtered_segregation %>%
     filter(Nationality == nationality) %>%
-    filter(!is.na(geometry)) %>%  # Ensure spatial features are present
+    filter(!is.na(geometry)) %>%
     group_by(MSOA11CD) %>%
     summarize(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop") %>%
-    left_join(unique_geometries, by = "MSOA11CD") %>% # Add unique geometries
-    st_make_valid() # Ensure valid geometries
+    left_join(unique_geometries, by = "MSOA11CD") %>%  # Reattach unique geometries
+    st_as_sf() %>%
+    st_make_valid()  # Ensure valid geometries
   
-  # Convert to Spatial* object (required by spgwr)
+  # Convert to Spatial* object for spgwr
   nat_spatial <- as(nat_data, "Spatial")
-  
+
   # Bandwidth selection (adaptive GWR)
   bandwidth <- gwr.sel(
     as.formula(best_formula),
@@ -354,7 +357,7 @@ for (nationality in nationalities) {
     coords = coordinates(nat_spatial),
     gweight = gwr.Gauss
   )
-  
+
   # Run GWR
   gwr_model <- gwr(
     as.formula(best_formula),
@@ -364,18 +367,18 @@ for (nationality in nationalities) {
     gweight = gwr.Gauss,
     fit.points = TRUE
   )
-  
+
   # Extract GWR results
   gwr_results <- as.data.frame(gwr_model$SDF)
-  
+
   # Save results back to spatial data
   nat_data <- cbind(nat_data, gwr_results)
-  
+
   # Save GWR output to a shapefile
   st_write(nat_data, paste0("gwr_outputs/GWR_", nationality, ".shp"), delete_dsn = TRUE)
-  
+
   # Visualize GWR coefficient maps for selected predictors
-  for (variable in c("Rent", "budget_proportion", "average_owned", "average_rented", "average_social", "Houseprice", "LaggedSettlement")) {
+  for (variable in c("Rent", "budget_proportion", "average_owned", "Houseprice", "lagged_diss", "Occupation", "MSOA_crime", "MSOA_percent_green", "PTAL")) {
     ggplot(nat_data) +
       geom_sf(aes_string(fill = variable), color = NA) +
       scale_fill_viridis_c() +

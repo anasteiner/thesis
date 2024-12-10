@@ -669,50 +669,6 @@ interpolated_rents <- rents_long %>%
 
 ```
 
-## Dummie policy data
-```{r}
-# Adjusted policy definitions for 2001–2021 with pre and post = 0, during = 1
-policy <- list(
-  "Right_to_Buy" = list(
-    boroughs = c("Barking", "Havering", "Redbridge", "Newham", "Haringey"),
-    year_ranges = list(pre_post = c(2001:2003, 2010:2021), during = 2004:2009)
-  ),
-  "Welfare_Reform_Act" = list(
-    boroughs = c("Newham", "Tower Hamlets", "Barking and Dagenham", "Hackney", "Enfield"),
-    year_ranges = list(pre_post = c(2001:2011, 2017:2021), during = 2012:2016)
-  ),
-  "Elephant_and_Castle_Redevelopment" = list(
-    boroughs = c("Southwark"),
-    year_ranges = list(pre_post = c(2001:2003, 2022), during = 2004:2021)
-  ),
-  "Affordable_Housing_Program" = list(
-    boroughs = c("Newham", "Tower Hamlets", "Croydon", "Barking"),
-    year_ranges = list(pre_post = c(2001:2015, 2022), during = 2016:2021)
-  ),
-  "Housing_Act_2004" = list(
-    boroughs = c("Tower Hamlets", "Hackney", "Newham", "Brent", "Ealing"),
-    year_ranges = list(pre_post = c(2001:2003, 2012:2021), during = 2004:2011)
-  )
-)
-
-# Add dummy variables for each policy
-for (policy_name in names(policy)) {
-  policy_info <- policy[[policy_name]]
-  
-  # Add a new column for each policy
-  msoa_with_years[[policy_name]] <- with(msoa_with_years,
-    ifelse(
-      LAD11NM %in% policy_info$boroughs & Year %in% policy_info$year_ranges$during, 
-      1, 
-      0
-    )
-  )
-}
-
-finals_dummies <- msoa_with_years %>%
-  select(MSOA11CD, MSOA11NM, Year, geometry, Right_to_Buy, Welfare_Reform_Act, Elephant_and_Castle_Redevelopment, Affordable_Housing_Program, Housing_Act_2004)
-```
-
 # Final housing data
 ```{r}
 # Step 1: Filter datasets for odd years
