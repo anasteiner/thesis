@@ -59,12 +59,12 @@ final_segregation <- segregation_sf %>%
     MSOA11NM,
     Year,
     Rent,
-    budget_proportion,
-    average_owned,
+    Socialhousing = budget_proportion,
+    Ownership = average_owned,
     average_rented,
     average_social,
     Houseprice,
-    Occupation,
+    Overoccupation = Occupation,
     geometry = geometry.y,
     MSOA_crime,
     MSOA_percent_green,
@@ -72,8 +72,11 @@ final_segregation <- segregation_sf %>%
     Nationality,
     Dissimilarity_Index,
     lagged_diss = lagged_diss.y,
-    H,
-    Isolation_Index,
+    lagged_Rent,
+    lagged_Ownership,
+    lagged_socialhousing,
+    lagged_houseprice,
+    lagged_overoccupation
   ) 
 
 filtered_segregation<- final_segregation %>%
@@ -237,7 +240,7 @@ install.packages("sjPlot")
 library(sjPlot)    # For styled regression tables
 
 # Define variables
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation")
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", include lagged)
 neighborhood_variables <- c("MSOA_crime", "MSOA_percent_green", "PTAL")
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
 
@@ -255,12 +258,8 @@ for (nationality in nationalities) {
   # Handle missing values
   numeric_data <- numeric_data %>% filter(complete.cases(select(., all_of(c(housing_variables, neighborhood_variables, "lagged_diss")))))
   
-  # Scale continuous variables
-  scaled_data <- numeric_data %>%
-    mutate(across(all_of(c(housing_variables, neighborhood_variables, "lagged_diss")), scale, .names = "scaled_{.col}"))
-  
   # Define dependent variable
-  y_variable <- "Dissimilarity_Index"
+  y_variable <- "scaled_Dissimilarity_Index"
   
   # Initialize list to store models
   models <- list()

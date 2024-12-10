@@ -782,9 +782,16 @@ cleaned_housing <- cleaned_housing %>%
                             manual_values$average_social[match(Year, manual_values$Year)], 
                             average_social)
   )
+```
 
+```{r}
+# Specify columns for which you want to create lagged-1 versions
+columns_to_lag <- c("Rent", "budget_proportion", "Houseprice", "Occupation", "average_social")
 
-
+# Create lagged-1 columns
+cleaned_housing <- cleaned_housing %>%
+  arrange(ID, Year) %>% # Ensure data is sorted
+  mutate(across(all_of(columns_to_lag), ~ lag(.x, 1), .names = "lagged_{.col}"))
 ```
 
 ## Download CSV..
