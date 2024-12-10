@@ -504,6 +504,134 @@ finalest_census_dt <- finalest_census_dt[!(Nationality %in% c("Total_Population"
 finalest_census_dt <- finalest_census_dt[, !c("Total_Pop", "Population", "lagged_diss.x"), with = FALSE]
 ```
 
+EDA
+```{r}
+# Scale the Dissimilarity Index
+finalest_census_dt <- finalest_census_dt %>%
+  mutate(Dissimilarity_Index = Dissimilarity_Index * 100)
+```
+
+```{r}
+# Define nationalities
+nationalities <- unique(finalest_census_dt$Nationality)
+
+# 1. Line Graphs for Dissimilarity Index, Isolation Index, and Theil's H
+dir.create("line_graphs", showWarnings = FALSE)
+
+for (index_var in c("Dissimilarity_Index", "Isolation_Index", "H")) {
+  plot <- ggplot(finalest_census_dt, aes(x = Year, y = !!sym(index_var), color = Nationality)) +
+    geom_line(size = 1) +
+    labs(
+      title = paste(index_var, "Over Time for All Nationalities"),
+      x = "Year",
+      y = index_var,
+      color = "Nationality"
+    ) +
+    theme_minimal()
+  
+  ggsave(
+    filename = paste0("line_graphs/", index_var, "_line_graph.png"),
+    plot = plot,
+    width = 10,
+    height = 6
+  )
+}
+
+# 2. Maps for Dissimilarity Index in 2001, 2011, 2021
+dir.create("maps", showWarnings = FALSE)
+
+years_to_map <- c(2001, 2011, 2021)
+
+for (nationality in nationalities) {
+  for (year in years_to_map) {
+    map_data <- finalest_census_dt %>%
+      filter(Nationality == nationality, Year == year) %>%
+      st_as_sf()
+    
+    map_plot <- ggplot(map_data) +
+      geom_sf(aes(fill = Dissimilarity_Index), color = NA) +
+      scale_fill_viridis_c(option = "C") +
+      labs(
+        title = paste("Dissimilarity Index for", nationality, "-", year),
+        fill = "Dissimilarity Index"
+      ) +
+      theme_minimal()
+    
+    ggsave(
+      filename = paste0("maps/Dissimilarity_Map_", nationality, "_", year, ".png"),
+      plot = map_plot,
+      width = 10,
+      height = 6
+    )
+  }
+}
+```
+
+```{r}
+# Required Libraries
+library(sf)
+library(spdep)
+library(ggplot2)
+library(dplyr)
+
+# Create directory for Moran's I outputs
+dir.create("moran_outputs", showWarnings = FALSE)
+
+# Define nationalities
+nationalities <- unique(finalest_census_dt$Nationality)
+
+# Moran's I and Visualization Loop
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>%
+    filter(Nationality == nationality) %>%
+    st_as_sf()
+  
+  # Create neighbors list
+  nb <- poly2nb(nat_data)
+  
+  # Create spatial weights matrix
+  lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+  
+  # Moran's I calculation for Dissimilarity Index
+  moran_test <- moran.test(nat_data$Dissimilarity_Index, lw, zero.policy = TRUE)
+  
+  # Extract Moran's I and p-value
+  moran_value <- moran_test$estimate["Moran I statistic"]
+  p_value <- moran_test$p.value
+  
+  # Save Moran's I results to a text file
+  writeLines(
+    paste(
+      "Moran's I for", nationality, "\n",
+      "Moran's I statistic:", round(moran_value, 4), "\n",
+      "p-value:", round(p_value, 4), "\n"
+    ),
+    con = paste0("moran_outputs/Moran_", nationality, ".txt")
+  )
+  
+  # Moran scatterplot visualization
+  moran_plot <- ggplot(data = nat_data) +
+    geom_point(aes(x = nat_data$Dissimilarity_Index, 
+                   y = lag.listw(lw, nat_data$Dissimilarity_Index, zero.policy = TRUE)),
+               alpha = 0.5, color = "blue") +
+    labs(
+      title = paste("Moran's Scatterplot for", nationality),
+      x = "Dissimilarity Index",
+      y = "Spatially Lagged Dissimilarity Index"
+    ) +
+    theme_minimal()
+  
+  # Save Moran scatterplot as PNG
+  ggsave(
+    filename = paste0("moran_outputs/Moran_Scatter_", nationality, ".png"),
+    plot = moran_plot,
+    width = 8,
+    height = 6
+  )
+}
+```
+
 ## Download CSV
 ```{r}
 str(finalest_census_dt)
@@ -514,5 +642,7 @@ census_no_geo <- finalest_census_dt[, !"geometry"]
 # Write the cleaned data frame to a CSV file
 write.csv(census_no_geo, "census_data.csv", row.names = FALSE)
 ```
+
+
 
 

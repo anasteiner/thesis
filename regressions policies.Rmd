@@ -17,7 +17,8 @@ Y.
 # Required Libraries
 library(tidyverse)
 library(car) # For VIF and diagnostics
-library(stargazer) # For traditional regression tables
+library(stargazer)
+library(sf)# For traditional regression tables
 ```
 
 ```{r}
