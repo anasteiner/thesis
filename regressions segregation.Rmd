@@ -1,3 +1,5 @@
+This document shows the code for the Linear and geographically weighted regressions that will analyse the correlation between housing characeristics and segregation data.  
+
 ## Load libraries
 
 ```{r}
@@ -54,7 +56,7 @@ segregation_sf <- st_as_sf(segregation_final)
 # Clean the dataset
 final_segregation <- segregation_sf %>%
   # Select only the necessary columns and rename them
-  select(
+  dplyr::select(
     MSOA11CD,
     MSOA11NM,
     Year,
@@ -65,171 +67,123 @@ final_segregation <- segregation_sf %>%
     average_social,
     Houseprice,
     Overoccupation = Occupation,
-    geometry = geometry.y,
+    geometry,
     MSOA_crime,
     MSOA_percent_green,
     PTAL,
     Nationality,
+    Proportion,
     Dissimilarity_Index,
-    lagged_diss = lagged_diss.y,
+    lagged_diss,
     lagged_Rent,
-    lagged_Ownership,
-    lagged_socialhousing,
-    lagged_houseprice,
-    lagged_overoccupation
+    lagged_socialhousing = lagged_average_social,
+    lagged_Houseprice,
+    lagged_Occupation
   ) 
 
 filtered_segregation<- final_segregation %>%
   filter(MSOA11NM != "London")
 ```
 
-## Question 1: How do housing characteristics affect segregation?
+## Correlations and Linear regressions
 
-## Scatterplots
-To visualize the instantaneous relationships between each housing variable and the Dissimilarity Index for each nationality.
+### Correlation matrix for each nationality
 
 ```{r}
-# Define nationalities and housing variables
-nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "lagged_diss")
-
-# Create directories for scatterplots
-dir.create("scatter_plots", showWarnings = FALSE)
-
-install.packages("ggplot2")
-library(ggplot2)
-
-# Loop through nationalities and housing variables to create scatterplots
-for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
-  
-  for (housing_var in housing_variables) {
-    # Create scatterplot
-    scatter_plot <- ggplot(nationality_data, aes_string(x = housing_var, y = "Dissimilarity_Index")) +
-      geom_point(color = "blue", alpha = 0.5) +
-      geom_smooth(method = "lm", color = "red", se = FALSE) +
-      labs(
-        title = paste("Scatter Plot:", housing_var, "vs Dissimilarity Index -", nationality),
-        x = housing_var,
-        y = "Dissimilarity Index"
-      ) +
-      theme_minimal()
-    
-    # Save scatterplot
-    ggsave(
-      filename = paste0("scatter_plots/Scatter_", nationality, "_", housing_var, ".png"), 
-      plot = scatter_plot, 
-      width = 8, 
-      height = 6
-    )
-  }
-}
-```
-
-## Correlation matrix
-To summarize the strength and direction of pairwise relationships between all housing variables and the Dissimilarity Index for each nationality.
-```{r}
-# Load required libraries
 library(dplyr)
-
-# Define nationalities
-nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-
-# Directory for correlation matrices
-dir.create("correlation_matrices", showWarnings = FALSE)
-
-install.packages("ggcorrplot")
 library(ggcorrplot)
 
-# Loop through nationalities to generate correlation matrices
+# Create a directory for correlation matrix outputs
+dir.create("correlation_matrices", showWarnings = FALSE)
+
+# Define housing and neighborhood variables
+x_vars <- c("Rent", "Socialhousing", "Ownership", "average_rented", "average_social", 
+            "Houseprice", "Overoccupation", "MSOA_crime", "MSOA_percent_green", "PTAL")
+
+# Loop through each nationality to compute and save correlation matrices
+nationalities <- unique(finalest_census_dt$Nationality)
+
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
+  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
   
-  # Drop the geometry column using st_drop_geometry()
-  relevant_data <- nationality_data %>%
-    st_drop_geometry() %>%  # Drop geometry column
-    select(c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "Dissimilarity_Index", "lagged_diss")) %>%
-    mutate(across(where(is.character), as.numeric))  # Convert character columns to numeric
+  # Subset variables for correlation
+  correlation_data <- nat_data %>% select(Dissimilarity_Index, all_of(x_vars))
   
-  # Ensure all columns are numeric
-  numeric_data <- relevant_data %>%
-    select(where(is.numeric))  # Keep only numeric columns
+  # Compute correlation matrix
+  corr_matrix <- cor(correlation_data, use = "complete.obs")
   
-  # Check if there are enough numeric columns and rows
-  if (ncol(numeric_data) > 1 && nrow(numeric_data) > 1) {
-    # Compute correlation matrix
-    cor_matrix <- cor(numeric_data, use = "complete.obs")
+  # Visualize and save the correlation matrix
+  corr_plot <- ggcorrplot(corr_matrix, method = "circle", title = paste("Correlation Matrix for", nationality)) +
+    theme_minimal()
+  
+  ggsave(filename = paste0("correlation_matrices/correlation_matrix_", nationality, ".png"),
+         plot = corr_plot, width = 10, height = 6)
+}
+```
+
+### Scatterplot for individual correlations
+
+```{r}
+library(ggplot2)
+
+# Create a directory for scatterplot outputs
+dir.create("scatterplots", showWarnings = FALSE)
+
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
+  
+  # Generate scatterplots for each variable
+  for (x_var in x_vars) {
+    scatter_plot <- ggplot(nat_data, aes_string(x = x_var, y = "Dissimilarity_Index")) +
+      geom_point(alpha = 0.5, color = "blue") +
+      geom_smooth(method = "lm", se = FALSE, color = "red") +
+      labs(title = paste("Scatterplot for", nationality, "-", x_var),
+           x = x_var, y = "Dissimilarity Index") +
+      theme_minimal()
     
-    # Visualize correlation matrix as a heatmap
-    cor_plot <- ggcorrplot(cor_matrix, method = "circle", type = "lower", lab = TRUE, 
-                           title = paste("Correlation Matrix -", nationality),
-                           colors = c("blue", "white", "red"))
-    
-    # Save the correlation matrix plot
-    ggsave(filename = paste0("correlation_matrices/Correlation_", nationality, ".png"), 
-           plot = cor_plot, width = 8, height = 6)
-  } else {
-    message(paste("Skipping nationality:", nationality, "- insufficient numeric data for correlation."))
+    # Save the scatterplot
+    ggsave(filename = paste0("scatterplots/scatterplot_", nationality, "_", x_var, ".png"),
+           plot = scatter_plot, width = 10, height = 6)
   }
 }
 ```
 
-## Cross correlation function analysis
-CCF for all six nationalities and all five x variables (housing characteristics). This will result in 30 CCF plots (6 nationalities × 5 variables).
+### CCFs for individual correlations
+
 ```{r}
-# Load required libraries
-library(tidyverse)
+library(forecast)
 
-# Define nationalities and housing variables
-nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "lagged_diss")
+# Create a directory for CCF outputs
+dir.create("ccfs", showWarnings = FALSE)
 
-# Create a directory to save CCF plots if it doesn't exist
-dir.create("ccf_plots", showWarnings = FALSE)
-
-# Loop over nationalities and housing variables
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nationality_data <- filtered_segregation %>% filter(Nationality == nationality)
+  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
   
-  # Ensure data is sorted by Year
-  nationality_data <- nationality_data %>% mutate(Year = as.numeric(Year)) %>% arrange(Year)
-  
-  # Extract the segregation index as the time series (dependent variable)
-  segregation_ts <- ts(nationality_data$Dissimilarity_Index, start = min(nationality_data$Year), frequency = 1)
-  
-  for (housing_var in housing_variables) {
-    # Extract the housing variable as the time series (independent variable)
-    housing_ts <- ts(nationality_data[[housing_var]], start = min(nationality_data$Year), frequency = 1)
+  for (x_var in x_vars) {
+    # Compute the CCF between Dissimilarity Index and the variable
+    ccf_plot <- ccf(nat_data$Dissimilarity_Index, nat_data[[x_var]], lag.max = 10, plot = TRUE,
+                    main = paste("CCF for", nationality, "-", x_var))
     
-    # Check for and handle missing values
-    if (anyNA(segregation_ts) || anyNA(housing_ts)) {
-      # Filter out rows with NA values in either series
-      valid_data <- nationality_data %>% 
-        filter(!is.na(Dissimilarity_Index) & !is.na(.data[[housing_var]]))
-      
-      # Recreate the time series with non-NA values
-      segregation_ts <- ts(valid_data$Dissimilarity_Index, start = min(valid_data$Year), frequency = 1)
-      housing_ts <- ts(valid_data[[housing_var]], start = min(valid_data$Year), frequency = 1)
-    }
-    
-    # Save the CCF plot as an image
-    png(filename = paste0("ccf_plots/CCF_", nationality, "_", housing_var, ".png"), width = 800, height = 600)
-    ccf(housing_ts, segregation_ts, lag.max = 5, 
-        main = paste("CCF:", housing_var, "vs Dissimilarity Index -", nationality))
+    # Save the plot
+    png(filename = paste0("ccfs/ccf_", nationality, "_", x_var, ".png"), width = 800, height = 600)
+    plot(ccf_plot)
     dev.off()
   }
 }
 ```
 
-# Base regressions (1-5 housing characteristics)
+### Linear regressions
+
+Base regressions (1-5 housing characteristics)
 Run separate regressions for each housing variable to assess their individual contributions to the segregation index.
-##No. 6 Lagged settlement model
-Incorporate the lagged settlement variable alongside all housing variables to capture temporal dependencies.
-##No. 7 Neighborhood data
+No. 6 Neighborhood data
 Add neighborhood-level variables to create a comprehensive model.
+No. 7 Lagged settlement model
+Incorporate the lagged settlement variable alongside all housing variables to capture temporal dependencies.
+
 ```{r}
 # Load required libraries
 library(tidyverse)
@@ -313,157 +267,240 @@ for (nationality in nationalities) {
 }
 ```
 
-# GWR with best regression model
-Explores spatial variations in these relationships, revealing local heterogeneity.
+### Temporal analysis of Linear regressions for policy analysis
+
 ```{r}
-# Required Libraries
+# Create a directory for temporal analysis outputs
+dir.create("temporal_analysis", showWarnings = FALSE)
+
+# Define policy periods
+finalest_census_dt <- finalest_census_dt %>%
+  mutate(Policy_Period = case_when(
+    Year < 2010 ~ "Pre-Policy",
+    Year >= 2010 & Year < 2015 ~ "During Policy",
+    Year >= 2015 ~ "Post-Policy"
+  ))
+
+# Loop through each nationality
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
+  
+  # Group by policy period and compute mean diss index
+  temporal_summary <- nat_data %>%
+    group_by(Policy_Period) %>%
+    summarize(
+      Mean_Dissimilarity_Index = mean(Dissimilarity_Index, na.rm = TRUE)
+    )
+  
+  # Save the temporal summary
+  write.csv(temporal_summary, file = paste0("temporal_analysis/temporal_summary_", nationality, ".csv"), row.names = FALSE)
+}
+```
+
+## GWR 
+Explores spatial variations in these relationships, revealing local heterogeneity.
+
+### GWR with best regression model
+
+```{r}
 library(sf)
-install.packages("spgwr")
 library(spgwr)
-library(tidyverse)
+library(dplyr)
 
-# Define variables
-nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
-best_formula <- paste("Dissimilarity_Index ~ Rent + budget_proportion + average_owned + Houseprice + lagged_diss + Occupation + MSOA_crime + MSOA_percent_green + PTAL")
-
-# Ensure directory for GWR outputs
+# Create a directory for GWR outputs
 dir.create("gwr_outputs", showWarnings = FALSE)
 
-# Deduplicate geometries (prepare unique geometries for MSOAs)
-unique_geometries <- filtered_segregation %>%
-  select(MSOA11CD, geometry) %>%
-  distinct()  # Retain only unique geometries
+# Define predictors and dependent variable
+y_var <- "Dissimilarity_Index"
+x_vars <- c("Rent", "Overoccupation", "Socialhousing", "Ownership", "Houseprice")
 
-# Loop over nationalities
+# Loop through nationalities and years
+nationalities <- unique(finalest_census_dt$Nationality)
+years <- unique(finalest_census_dt$Year)
+
 for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- filtered_segregation %>%
-    filter(Nationality == nationality) %>%
-    filter(!is.na(geometry)) %>%
-    group_by(MSOA11CD) %>%
-    summarize(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop") %>%
-    left_join(unique_geometries, by = "MSOA11CD") %>%  # Reattach unique geometries
-    st_as_sf() %>%
-    st_make_valid()  # Ensure valid geometries
-  
-  # Convert to Spatial* object for spgwr
-  nat_spatial <- as(nat_data, "Spatial")
+  for (year in years) {
+    # Filter data for the current nationality and year
+    gwr_data <- finalest_census_dt %>%
+      filter(Nationality == nationality, Year == year) %>%
+      distinct(MSOA11CD, .keep_all = TRUE)  # Ensure unique geometries
+    
+    # Extract centroids for spatial coordinates
+    gwr_data <- gwr_data %>%
+      st_as_sf() %>%
+      st_transform(crs = 27700)  # Example CRS: British National Grid
+    centroids <- st_centroid(gwr_data$geometry)
+    coords <- as.data.frame(st_coordinates(centroids))
+    gwr_data <- cbind(gwr_data, coords)
+    
+    # Create formula for GWR
+    gwr_formula <- as.formula(paste(y_var, "~", paste(x_vars, collapse = " + ")))
+    
+    # Fit GWR model
+    gwr_model <- gwr.basic(
+      formula = gwr_formula,
+      data = gwr_data,
+      coords = cbind(gwr_data$X, gwr_data$Y),
+      bw = gwr.sel(gwr_formula, data = gwr_data, coords = cbind(gwr_data$X, gwr_data$Y))
+    )
+    
+    # Save GWR results
+    gwr_results <- as.data.frame(gwr_model$SDF)  # Extract coefficients and residuals
+    gwr_results$MSOA11CD <- gwr_data$MSOA11CD  # Add MSOA identifiers
 
-  # Bandwidth selection (adaptive GWR)
-  bandwidth <- gwr.sel(
-    as.formula(best_formula),
-    data = nat_spatial,
-    coords = coordinates(nat_spatial),
-    gweight = gwr.Gauss
-  )
-
-  # Run GWR
-  gwr_model <- gwr(
-    as.formula(best_formula),
-    data = nat_spatial,
-    coords = coordinates(nat_spatial),
-    bandwidth = bandwidth,
-    gweight = gwr.Gauss,
-    fit.points = TRUE
-  )
-
-  # Extract GWR results
-  gwr_results <- as.data.frame(gwr_model$SDF)
-
-  # Save results back to spatial data
-  nat_data <- cbind(nat_data, gwr_results)
-
-  # Save GWR output to a shapefile
-  st_write(nat_data, paste0("gwr_outputs/GWR_", nationality, ".shp"), delete_dsn = TRUE)
-
-  # Visualize GWR coefficient maps for selected predictors
-  for (variable in c("Rent", "budget_proportion", "average_owned", "Houseprice", "lagged_diss", "Occupation", "MSOA_crime", "MSOA_percent_green", "PTAL")) {
-    ggplot(nat_data) +
-      geom_sf(aes_string(fill = variable), color = NA) +
-      scale_fill_viridis_c() +
-      labs(
-        title = paste("GWR Coefficient Map for", variable, "(", nationality, ")"),
-        fill = "Coefficient"
-      ) +
-      theme_minimal() +
-      ggsave(paste0("gwr_outputs/GWR_Coefficient_", nationality, "_", variable, ".png"), width = 8, height = 6)
+    write.csv(gwr_results, file = paste0("gwr_outputs/gwr_results_", nationality, "_", year, ".csv"), row.names = FALSE)
   }
 }
 ```
 
-# Diagnostico
 ```{r}
-# Calculate RMSE for GWR
-observed <- gwr_model$SDF$Dissimilarity_Index # Replace with your dependent variable's name
-predicted <- gwr_model$SDF$gwr.pred           # GWR-predicted values
-rmse <- sqrt(mean((observed - predicted)^2, na.rm = TRUE))
+# Create a directory for cluster maps
+dir.create("cluster_maps", showWarnings = FALSE)
 
-# Print and save RMSE
-cat("RMSE for GWR (", nationality, "):", rmse, "\n")
-write.table(data.frame(Nationality = nationality, RMSE = rmse),
-            file = paste0("gwr_outputs/RMSE_", nationality, ".txt"), row.names = FALSE, append = TRUE)
-
-# Additional diagnostics for each GWR model
+# Loop through nationalities and years for cluster maps
 for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- spatial_data %>% filter(Nationality == nationality)
-  
-  # Ensure spatial features are valid
-  nat_data <- nat_data %>% st_make_valid()
-  
-  # Convert to Spatial* object (required by spgwr)
-  nat_spatial <- as(nat_data, "Spatial")
-  
-  # Bandwidth selection (adaptive GWR)
-  bandwidth <- gwr.sel(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), gweight = gwr.Gauss)
-  
-  # Run GWR
-  gwr_model <- gwr(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), bandwidth = bandwidth, gweight = gwr.Gauss, fit.points = TRUE)
-  
-  # Extract GWR results
-  gwr_results <- as.data.frame(gwr_model$SDF)
-  local_r2 <- gwr_results$localR2
-  residuals <- gwr_results$residuals
-  
-  # Save results back to spatial data
-  nat_data <- cbind(nat_data, gwr_results)
-  
-  # Save GWR output to a shapefile
-  st_write(nat_data, paste0("gwr_outputs/GWR_", nationality, ".shp"), delete_dsn = TRUE)
-  
-  # Plot coefficient maps for selected predictors
-  for (variable in c("HousingIndex", "RentPrice", "Tenancy", "LaggedSettlement")) {
-    ggplot(nat_data) +
-      geom_sf(aes_string(fill = variable), color = NA) +
-      scale_fill_viridis_c() +
-      labs(title = paste("GWR Coefficient Map for", variable, "(", nationality, ")"), fill = "Coefficient") +
-      theme_minimal() +
-      ggsave(paste0("gwr_outputs/GWR_Coefficient_", nationality, "_", variable, ".png"), width = 8, height = 6)
+  for (year in years) {
+    # Load GWR results
+    gwr_results <- read.csv(paste0("gwr_outputs/gwr_results_", nationality, "_", year, ".csv"))
+    
+    # Join GWR results back to unique geometries
+    gwr_map_data <- finalest_census_dt %>%
+      filter(Year == year, Nationality == nationality) %>%
+      distinct(MSOA11CD, .keep_all = TRUE) %>%
+      st_as_sf() %>%
+      st_transform(crs = 27700) %>%
+      left_join(gwr_results, by = "MSOA11CD")
+    
+    # Generate cluster maps for each predictor
+    for (x_var in x_vars) {
+      cluster_map <- ggplot(gwr_map_data) +
+        geom_sf(aes_string(fill = x_var), color = NA) +
+        scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, name = paste("Cluster of", x_var)) +
+        labs(title = paste("Cluster Analysis of", x_var, "-", nationality, "-", year),
+             caption = "Source: GWR Analysis") +
+        theme_minimal()
+      
+      # Save cluster map
+      ggsave(filename = paste0("cluster_maps/cluster_map_", x_var, "_", nationality, "_", year, ".png"),
+             plot = cluster_map, width = 12, height = 8)
+    }
   }
-  
-  # Plot local R-squared
-  ggplot(nat_data) +
-    geom_sf(aes(fill = local_r2), color = NA) +
-    scale_fill_viridis_c() +
-    labs(title = paste("Local R-squared Map (", nationality, ")"), fill = "R-squared") +
-    theme_minimal() +
-    ggsave(paste0("gwr_outputs/GWR_LocalR2_", nationality, ".png"), width = 8, height = 6)
-  
-  # Residual diagnostics
-  ggplot(nat_data) +
-    geom_sf(aes(fill = residuals), color = NA) +
-    scale_fill_viridis_c() +
-    labs(title = paste("Residual Map (", nationality, ")"), fill = "Residuals") +
-    theme_minimal() +
-    ggsave(paste0("gwr_outputs/GWR_Residuals_", nationality, ".png"), width = 8, height = 6)
-  
-  # Spatial autocorrelation of residuals (Moran's I)
-  moran <- spdep::moran.test(residuals, listw = spdep::nb2listw(spdep::poly2nb(nat_spatial)))
-  cat("Moran's I for residuals (", nationality, "):", moran$estimate, "\n")
 }
 ```
 
-## Filtered years
+```{r}
+# Create a directory for coefficient maps
+dir.create("coefficient_maps", showWarnings = FALSE)
+
+# Loop through nationalities and years to generate coefficient maps
+for (nationality in nationalities) {
+  for (year in years) {
+    # Load GWR results
+    gwr_results <- read.csv(paste0("gwr_outputs/gwr_results_", nationality, "_", year, ".csv"))
+    
+    # Join GWR results back to unique geometries
+    gwr_map_data <- finalest_census_dt %>%
+      filter(Year == year, Nationality == nationality) %>%
+      distinct(MSOA11CD, .keep_all = TRUE) %>%
+      st_as_sf() %>%
+      st_transform(crs = 27700) %>%
+      left_join(gwr_results, by = "MSOA11CD")
+    
+    # Generate coefficient maps for each predictor
+    for (x_var in x_vars) {
+      coeff_map <- ggplot(gwr_map_data) +
+        geom_sf(aes_string(fill = x_var), color = NA) +
+        scale_fill_viridis_c(option = "C", name = paste("Coefficient of", x_var)) +
+        labs(title = paste("Effect of", x_var, "on Segregation -", nationality, "-", year),
+             caption = "Source: GWR Analysis") +
+        theme_minimal()
+      
+      # Save coefficient map
+      ggsave(filename = paste0("coefficient_maps/coeff_map_", x_var, "_", nationality, "_", year, ".png"),
+             plot = coeff_map, width = 12, height = 8)
+    }
+  }
+}
+```
+
+### Diagnostics of GWR
+
+```{r}
+# Required libraries
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(spdep)
+library(viridis)
+
+# Create output directory for diagnostics
+dir.create("gwr_outputs/diagnostics", showWarnings = FALSE)
+
+# Loop through nationalities and years for diagnostics
+for (nationality in nationalities) {
+  for (year in years) {
+    tryCatch({
+      # Load the GWR results
+      gwr_results <- read.csv(paste0("gwr_outputs/gwr_results_", nationality, "_", year, ".csv"))
+      
+      # Filter and prepare data
+      gwr_data <- finalest_census_dt %>%
+        filter(Nationality == nationality, Year == year) %>%
+        distinct(MSOA11CD, .keep_all = TRUE) %>%
+        st_as_sf() %>%
+        st_transform(crs = 27700) %>%
+        left_join(gwr_results, by = "MSOA11CD")
+      
+      # 1. RMSE Calculation
+      observed <- gwr_data$Dissimilarity_Index
+      predicted <- gwr_results$gwr.pred  # Ensure gwr.pred exists in results
+      rmse <- sqrt(mean((observed - predicted)^2, na.rm = TRUE))
+      cat("RMSE for GWR (", nationality, ", ", year, "): ", rmse, "\n")
+      write.table(data.frame(Nationality = nationality, Year = year, RMSE = rmse),
+                  file = "gwr_outputs/diagnostics/RMSE_Summary.txt",
+                  row.names = FALSE, append = TRUE)
+      
+      # 2. Plot Local R-squared
+      ggplot(gwr_data) +
+        geom_sf(aes(fill = localR2), color = NA) +
+        scale_fill_viridis_c() +
+        labs(title = paste("Local R-squared Map (", nationality, "-", year, ")"),
+             fill = "Local R²") +
+        theme_minimal() +
+        ggsave(paste0("gwr_outputs/diagnostics/LocalR2_", nationality, "_", year, ".png"),
+               width = 10, height = 6)
+      
+      # 3. Residual Diagnostics
+      residuals <- gwr_results$gwr.e  # Ensure gwr.e exists in results
+      ggplot(gwr_data) +
+        geom_sf(aes(fill = residuals), color = NA) +
+        scale_fill_viridis_c() +
+        labs(title = paste("Residual Map (", nationality, "-", year, ")"),
+             fill = "Residuals") +
+        theme_minimal() +
+        ggsave(paste0("gwr_outputs/diagnostics/Residuals_", nationality, "_", year, ".png"),
+               width = 10, height = 6)
+      
+      # 4. Moran's I for Residuals
+      residuals_sp <- gwr_results$gwr.e  # Spatial residuals
+      gwr_nb <- poly2nb(as(gwr_data, "Spatial"))  # Neighborhood structure
+      gwr_listw <- nb2listw(gwr_nb, style = "W", zero.policy = TRUE)
+      moran <- moran.test(residuals_sp, gwr_listw, zero.policy = TRUE)
+      cat("Moran's I for residuals (", nationality, ", ", year, "): ", moran$estimate, "\n")
+      write.table(data.frame(Nationality = nationality, Year = year,
+                             Moran_I = moran$estimate, P_Value = moran$p.value),
+                  file = "gwr_outputs/diagnostics/Moran_Summary.txt",
+                  row.names = FALSE, append = TRUE)
+    }, error = function(e) {
+      cat("Error in processing GWR diagnostics for ", nationality, " in ", year, ": ", e$message, "\n")
+    })
+  }
+}
+```
+
+### Filtered years of GWR
+
 ```{r}
 # Define the years to study
 years_to_study <- c(2001, 2011, 2021) # Modify these years as needed
@@ -511,144 +548,4 @@ for (nationality in nationalities) {
   }
 }
 ```
-
-# Diagnostico
-```{r}
-# Calculate RMSE for GWR
-observed <- gwr_model$SDF$Dissimilarity_Index # Replace with your dependent variable's name
-predicted <- gwr_model$SDF$gwr.pred           # GWR-predicted values
-rmse <- sqrt(mean((observed - predicted)^2, na.rm = TRUE))
-
-# Print and save RMSE
-cat("RMSE for GWR (", nationality, "):", rmse, "\n")
-write.table(data.frame(Nationality = nationality, RMSE = rmse),
-            file = paste0("gwr_outputs/RMSE_", nationality, ".txt"), row.names = FALSE, append = TRUE)
-
-
-# Additional diagnostics for each GWR model
-for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- spatial_data %>% filter(Nationality == nationality)
-  
-  # Ensure spatial features are valid
-  nat_data <- nat_data %>% st_make_valid()
-  
-  # Convert to Spatial* object (required by spgwr)
-  nat_spatial <- as(nat_data, "Spatial")
-  
-  # Bandwidth selection (adaptive GWR)
-  bandwidth <- gwr.sel(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), gweight = gwr.Gauss)
-  
-  # Run GWR
-  gwr_model <- gwr(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), bandwidth = bandwidth, gweight = gwr.Gauss, fit.points = TRUE)
-  
-  # Extract GWR results
-  gwr_results <- as.data.frame(gwr_model$SDF)
-  local_r2 <- gwr_results$localR2
-  residuals <- gwr_results$residuals
-  
-  # Save results back to spatial data
-  nat_data <- cbind(nat_data, gwr_results)
-  
-  # Save GWR output to a shapefile
-  st_write(nat_data, paste0("gwr_outputs/GWR_", nationality, ".shp"), delete_dsn = TRUE)
-  
-  # Plot coefficient maps for selected predictors
-  for (variable in c("HousingIndex", "RentPrice", "Tenancy", "LaggedSettlement")) {
-    ggplot(nat_data) +
-      geom_sf(aes_string(fill = variable), color = NA) +
-      scale_fill_viridis_c() +
-      labs(title = paste("GWR Coefficient Map for", variable, "(", nationality, ")"), fill = "Coefficient") +
-      theme_minimal() +
-      ggsave(paste0("gwr_outputs/GWR_Coefficient_", nationality, "_", variable, ".png"), width = 8, height = 6)
-  }
-  
-  # Plot local R-squared
-  ggplot(nat_data) +
-    geom_sf(aes(fill = local_r2), color = NA) +
-    scale_fill_viridis_c() +
-    labs(title = paste("Local R-squared Map (", nationality, ")"), fill = "R-squared") +
-    theme_minimal() +
-    ggsave(paste0("gwr_outputs/GWR_LocalR2_", nationality, ".png"), width = 8, height = 6)
-  
-  # Residual diagnostics
-  ggplot(nat_data) +
-    geom_sf(aes(fill = residuals), color = NA) +
-    scale_fill_viridis_c() +
-    labs(title = paste("Residual Map (", nationality, ")"), fill = "Residuals") +
-    theme_minimal() +
-    ggsave(paste0("gwr_outputs/GWR_Residuals_", nationality, ".png"), width = 8, height = 6)
-  
-  # Spatial autocorrelation of residuals (Moran's I)
-  moran <- spdep::moran.test(residuals, listw = spdep::nb2listw(spdep::poly2nb(nat_spatial)))
-  cat("Moran's I for residuals (", nationality, "):", moran$estimate, "\n")
-}
-```
-
-##Temporal analysis of metrics
-```{r}
-# Define years to analyze
-years <- unique(final_data_sf_sf$Year) # Extract unique years in the dataset
-
-# Create a data frame to store temporal metrics
-temporal_metrics <- data.frame()
-
-# Loop over years and nationalities
-for (year in years) {
-  for (nationality in nationalities) {
-    # Filter data for the current year and nationality
-    nat_year_data <- spatial_data %>%
-      filter(Nationality == nationality, Year == year)
-    
-    # Ensure spatial features are valid
-    nat_year_data <- nat_year_data %>% st_make_valid()
-    
-    # Convert to Spatial* object
-    nat_spatial <- as(nat_year_data, "Spatial")
-    
-    # Bandwidth selection
-    bandwidth <- gwr.sel(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), gweight = gwr.Gauss)
-    
-    # Run GWR
-    gwr_model <- gwr(as.formula(best_formula), data = nat_spatial, coords = coordinates(nat_spatial), bandwidth = bandwidth, gweight = gwr.Gauss, fit.points = TRUE)
-    
-    # Extract metrics
-    observed <- gwr_model$SDF$Dissimilarity_Index # Replace with dependent variable
-    predicted <- gwr_model$SDF$gwr.pred
-    rmse <- sqrt(mean((observed - predicted)^2, na.rm = TRUE))
-    mean_r2 <- mean(gwr_model$SDF$localR2, na.rm = TRUE) # Average local R-squared
-    
-    # Append metrics to the temporal data frame
-    temporal_metrics <- rbind(temporal_metrics, data.frame(
-      Year = year,
-      Nationality = nationality,
-      RMSE = rmse,
-      Mean_R2 = mean_r2
-    ))
-  }
-}
-
-# Save temporal metrics to a CSV file
-write.csv(temporal_metrics, "gwr_outputs/Temporal_Metrics.csv", row.names = FALSE)
-
-# Visualize temporal trends
-library(ggplot2)
-
-# RMSE Trends
-ggplot(temporal_metrics, aes(x = Year, y = RMSE, color = Nationality, group = Nationality)) +
-  geom_line() +
-  geom_point() +
-  labs(title = "RMSE Trends Over Time", x = "Year", y = "RMSE") +
-  theme_minimal() +
-  ggsave("gwr_outputs/RMSE_Trends.png", width = 8, height = 6)
-
-# Mean R-squared Trends
-ggplot(temporal_metrics, aes(x = Year, y = Mean_R2, color = Nationality, group = Nationality)) +
-  geom_line() +
-  geom_point() +
-  labs(title = "Mean R-squared Trends Over Time", x = "Year", y = "Mean R-squared") +
-  theme_minimal() +
-  ggsave("gwr_outputs/MeanR2_Trends.png", width = 8, height = 6)
-```
-
 
