@@ -1,0 +1,264 @@
+This document shows the code for the Exploratory Data Anlysis that will be done using the census demographic dataset.  
+
+## Load necessary libraries
+
+```{r}
+# Install necessary libraries 
+install.packages(c("dplyr", "ggplot2", "sf", "spdep"))
+
+# Load libraries
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(spdep)
+```
+
+## Load census data
+
+```{r}
+# Load the census demographic dataset
+finalist_census_dt <- read_csv("/Users/anamariasteinercorrea/thesis/census_data.csv")
+msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+```
+
+## Adjust and correct data
+
+```{r}
+# Scale the Dissimilarity Index
+finalest_census_dt <- finalest_census_dt %>%
+  mutate(Dissimilarity_Index = Dissimilarity_Index * 100)
+```
+
+```{r}
+# View column names and types
+str(finalist_census_dt)
+
+# Get a summary of key variables
+summary(finalist_census_dt)
+
+# Check for missing values
+sapply(finalist_census_dt, function(x) sum(is.na(x)))
+```
+
+```{r}
+# Check if the dataset is an sf object
+class(finalist_census_dt)
+
+# Convert to sf object
+if (!"sf" %in% class(finalist_census_dt)) {
+  finalist_census_dt <- st_as_sf(finalist_census_dt, wkt = "geometry")
+}
+
+# Plot a quick map to verify geometry
+plot(st_geometry(finalist_census_dt))
+```
+
+## EDA
+
+### Visualice histograms and boxplots of distributions
+```{r}
+# Directory for histogram and boxplot outputs
+dir.create("distribution_plots", showWarnings = FALSE)
+
+# Histograms for all indices
+for (var in c("Proportion", "Dissimilarity_Index", "Isolation_Index", "Thiels-h")) {
+  hist_plot <- ggplot(finalest_census_dt, aes_string(x = var)) +
+    geom_histogram(bins = 30, fill = "blue", color = "black", alpha = 0.7) +
+    facet_wrap(~ Nationality, scales = "free") +
+    labs(title = paste("Histogram of", var, "by Nationality"),
+         x = var, y = "Count") +
+    theme_minimal()
+  
+  # Save histogram
+  ggsave(filename = paste0("distribution_plots/Histogram_", var, ".png"),
+         plot = hist_plot, width = 10, height = 6)
+}
+
+# Boxplots for all indices
+for (var in c("Dissimilarity_Index", "proportion", "Isolation_Index", "Thiels-h")) {
+  box_plot <- ggplot(finalest_census_dt, aes(x = Nationality, y = !!sym(var))) +
+    geom_boxplot(fill = "lightblue", color = "black", alpha = 0.7) +
+    labs(title = paste("Boxplot of", var, "by Nationality"),
+         x = "Nationality", y = var) +
+    theme_minimal()
+  
+  # Save boxplot
+  ggsave(filename = paste0("distribution_plots/Boxplot_", var, ".png"),
+         plot = box_plot, width = 10, height = 6)
+}
+```
+
+### Visualice temporal line graphs of all indices
+```{r}
+library(tidyr)
+
+# Reshape the data to a long format for all indices
+long_data <- finalest_census_dt %>%
+  pivot_longer(cols = c("Proportion", "Dissimilarity_Index", "Isolation_Index", "H"),
+               names_to = "Index",
+               values_to = "Value")
+
+# Create directory for nationality-wise plots
+dir.create("line_graphs_nationality", showWarnings = FALSE)
+
+# Loop through each nationality and create line plots
+nationalities <- unique(finalest_census_dt$Nationality)
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- long_data %>% filter(Nationality == nationality)
+  
+  # Generate the line plot
+  plot <- ggplot(nat_data, aes(x = Year, y = Value, color = Index, group = Index)) +
+    geom_line(size = 1.2) +
+    geom_point(size = 2) +
+    labs(title = paste("Temporal Trends for", nationality),
+         x = "Year", y = "Value", color = "Index") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+  # Save the plot
+  ggsave(filename = paste0("line_graphs_nationality/Trends_", nationality, ".png"),
+         plot = plot, width = 10, height = 6)
+}
+```
+
+### Visualice and compare temporal line graph between all nationalities
+```{r}
+# Create line graph for Dissimilarity Index comparing all nationalities
+dissimilarity_plot <- ggplot(finalest_census_dt, aes(x = Year, y = Dissimilarity_Index, color = Nationality, group = Nationality)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Dissimilarity Index Over Time (All Nationalities)",
+       x = "Year", y = "Dissimilarity Index", color = "Nationality") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Save the plot
+dir.create("line_graphs_comparison", showWarnings = FALSE)
+ggsave(filename = "line_graphs_comparison/Dissimilarity_Index_All_Nationalities.png",
+       plot = dissimilarity_plot, width = 10, height = 6)
+```
+
+### Compare heatmaps of diss index between nationalities
+```{r}
+# Directory for spatial heatmaps of diss index
+dir.create("maps", showWarnings = FALSE)
+
+# Years to map and Nationalities
+years_to_map <- c(2001, 2011, 2021)
+nationalities <- unique(finalest_census_dt$Nationality)
+
+# Generate heatmaps
+for (nationality in nationalities) {
+  for (year in years_to_map) {
+    map_data <- finalest_census_dt %>%
+      filter(Nationality == nationality, Year == year) %>%
+      st_as_sf()
+    
+    map_plot <- ggplot(map_data) +
+      geom_sf(aes(fill = Dissimilarity_Index), color = NA) +
+      scale_fill_viridis_c(option = "C") +
+      labs(title = paste("Dissimilarity Index for", nationality, "-", year),
+           fill = "Dissimilarity Index") +
+      theme_minimal()
+    
+    # Save map
+    ggsave(filename = paste0("maps/Dissimilarity_Map_", nationality, "_", year, ".png"),
+           plot = map_plot, width = 10, height = 6)
+  }
+}
+```
+
+### Calculate spatial autocorrelation of diss index between nationalities
+```{r}
+# Directory for Moran's I and LISA outputs
+dir.create("moran_outputs", showWarnings = FALSE)
+
+# Moran's I Loop
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>%
+    filter(Nationality == nationality) %>%
+    st_as_sf()
+  
+  # Create neighbors list
+  nb <- poly2nb(nat_data)
+  lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+  
+  # Moran's I Calculation
+  moran_test <- moran.test(nat_data$Dissimilarity_Index, lw, zero.policy = TRUE)
+  moran_value <- moran_test$estimate["Moran I statistic"]
+  p_value <- moran_test$p.value
+  
+  # Save Moran's I results
+  writeLines(paste("Moran's I for", nationality, "\n",
+                   "Moran's I statistic:", round(moran_value, 4), "\n",
+                   "p-value:", round(p_value, 4), "\n"),
+             con = paste0("moran_outputs/Moran_", nationality, ".txt"))
+  
+  # Moran Scatterplot
+  moran_plot <- ggplot(data = nat_data) +
+    geom_point(aes(x = Dissimilarity_Index,
+                   y = lag.listw(lw, nat_data$Dissimilarity_Index, zero.policy = TRUE)),
+               alpha = 0.5, color = "blue") +
+    labs(title = paste("Moran's Scatterplot for", nationality),
+         x = "Dissimilarity Index",
+         y = "Spatially Lagged Dissimilarity Index") +
+    theme_minimal()
+  
+  # Save Moran scatterplot
+  ggsave(filename = paste0("moran_outputs/Moran_Scatter_", nationality, ".png"),
+         plot = moran_plot, width = 8, height = 6)
+}
+```
+
+### Visualice maps of diss index between nationalities and through time
+```{r}
+# Create directory for spatial maps
+dir.create("spatial_maps", showWarnings = FALSE)
+
+# Plot map for Dissimilarity Index for all MSOAs
+diss_map <- ggplot(finalest_census_dt) +
+  geom_sf(aes(fill = Dissimilarity_Index, geometry = geometry), color = NA) +
+  scale_fill_viridis_c(option = "C", name = "Dissimilarity Index") +
+  labs(title = "Dissimilarity Index Across London (All Nationalities)",
+       caption = "Source: Census Data") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "right")
+
+# Save the plot
+ggsave(filename = "spatial_maps/Dissimilarity_Index_London.png",
+       plot = diss_map, width = 12, height = 8)
+```
+
+### Visualice maps of proportion between nationalities and through time
+```{r}
+# Plot map of Proportion for each nationality
+nationalities <- unique(finalest_census_dt$Nationality)
+
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>%
+    filter(Nationality == nationality)
+  
+  # Generate the map
+  proportion_map <- ggplot(nat_data) +
+    geom_sf(aes(fill = Proportion, geometry = geometry), color = NA) +
+    scale_fill_viridis_c(option = "C", name = "Proportion") +
+    labs(title = paste("Proportion of", nationality, "Across London"),
+         caption = "Source: Census Data") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "right")
+  
+  # Save the map
+  ggsave(filename = paste0("spatial_maps/Proportion_", nationality, ".png"),
+         plot = proportion_map, width = 12, height = 8)
+}
+```
+
+
+
+
+

@@ -1,3 +1,5 @@
+This document shows the code for the cleaning and joining of the demographic "census" data, and creation of its dataset. 
+
 ## Load necessary libraries
 ```{r}
 install.packages(c("readxl", "dplyr", "tidyr", "stats", "readr", "zoo", 
@@ -22,7 +24,7 @@ library(factoextra)
 library(reshape2)      
 ```
 
-## Load segregation data
+## Load census data
 ```{r}
 setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data")
 
@@ -268,7 +270,7 @@ final_2021 <- final_2021 %>%
   dplyr::select(-England_2021, -Irland_2021, -Scotland_2021, -Wales_2021)
 ```
 
-##### Create a complete census dataset
+#### Create a complete census dataset
 ```{r}
 # Merge the datasets by MSOA codes and names
 combined_census <- final_2001 %>%
@@ -285,12 +287,7 @@ final_census <- final_census %>%
   rename(Total_Population_2021 = Total_Population)
 ```
 
-```{r}
-#Brent 019, 020, 026 are the only ones that for 2021 changed to India as main nationality
-#(near wembley)
-```
-
-####Interpolate demogrpahic data set for non-census years
+#### Interpolate demogrpahic data set for non-census years
 ```{r}
 
 colnames(final_census)
@@ -311,9 +308,6 @@ data_long <- final_census %>%
 # Convert Year to numeric
 data_long$Year <- as.numeric(data_long$Year)
 
-# View the transformed data
-print(data_long)
-
 # Interpolate for odd years between 2001 and 2021
 library(zoo)
 data_long_interpolated <- data_long %>%
@@ -327,6 +321,7 @@ data_long_odd_years <- data_long_interpolated %>%
   filter(Year %% 2 == 1)
 
 ```
+#### Join geometry to final dataset
 
 ```{r}
 library(tidyr)
@@ -341,6 +336,7 @@ data_long_odd_years <- data_long_odd_years %>%
 msoa_census <- left_join(msoa, data_long_odd_years, by = c("MSOA11NM", "MSOA11CD"))
 ```
 
+#### Interpolate demogrpahic data set for non-census years
 ```{r}
 # Calculate proportions of each nationality
 census_final <- msoa_census %>%
@@ -352,7 +348,7 @@ census_final <- msoa_census %>%
   ungroup()
 ```
 
-## 3 Segregation analysis
+## Calculation of 3 Segregation analysis
 
 ```{r}
 # Replace zero proportions with a small value
@@ -361,46 +357,40 @@ census_final$Proportion <- ifelse(census_final$Proportion == 0, 0.00001, census_
 
 ### Dissimilarity index
 
-#### Application of dissimiliarity index
+#### Dissimiliarity index
 ```{r}
-# Specify the nationalities to compare against the majority
+# Specify nationalities for calculations
 nationalities <- c("Romania", "Poland", "Caribbean", "SouthAmerica", "SEAfrica", "Bangladesh")
 
-# Get unique years
+# Specify years for calculations
 years <- unique(census_final$Year)
 
-# Initialize a dataframe to store results
+# Create a new dataframe
 dissimilarity_results <- data.frame(MSOA11CD = character(), Year = integer(), Nationality = character(), Dissimilarity_Index = numeric(), stringsAsFactors = FALSE)
 
 for (year in years) {
   for (nat in nationalities) {
-    # Filter data for the majority population in the current year
     data_majority <- census_final %>%
       filter(Nationality == "Majority" & Year == year) %>%
       st_drop_geometry() %>%  
       dplyr::select(MSOA11CD, Year, Population) %>%
       rename(Population_majority = Population)
     
-    # Filter data for the specific nationality in the current year
     data_nationality <- census_final %>%
       filter(Nationality == nat & Year == year) %>%
       st_drop_geometry() %>%  
       dplyr::select(MSOA11CD, Year, Population) %>%
       rename(Population_nat = Population)
     
-    # Merge the majority and nationality data on MSOA and Year
     merged_data <- merge(data_majority, data_nationality, by = c("MSOA11CD", "Year"))
     
     if (nrow(merged_data) > 0) {
-      # Calculate the total population for majority and the target nationality
       total_majority <- sum(merged_data$Population_majority)
       total_nat <- sum(merged_data$Population_nat)
       
-      # Calculate the Dissimilarity Index for each MSOA using count data
       merged_data <- merged_data %>%
         mutate(Dissimilarity = 0.5 * abs((Population_majority / total_majority) - (Population_nat / total_nat)))
-      
-      # Store the results
+
       dissimilarity_results <- rbind(dissimilarity_results, 
                                      data.frame(MSOA11CD = merged_data$MSOA11CD, 
                                                 Year = merged_data$Year, 
@@ -410,19 +400,13 @@ for (year in years) {
   }
 }
 
-# Print the dissimilarity results
-print(dissimilarity_results)
-
-# Join the Dissimilarity Index back to the original dataset if needed
+# Join the Dissimilarity Index back to the original dataset 
 census_final_updated <- census_final %>%
   left_join(dissimilarity_results, by = c("MSOA11CD", "Year", "Nationality"))
-
-# Print or save the updated dataset
-print(census_final_updated)
 ```
 #### Lagged diss (-1)
 ```{r}
-# Ensure data is sorted properly for calculating the lag
+# Calculate the lagged dissimilarity
 dissimilarity_results <- dissimilarity_results %>%
   arrange(MSOA11CD, Nationality, Year) %>%  # Sort by MSOA, Nationality, and Year
   group_by(MSOA11CD, Nationality) %>%       # Group by MSOA and Nationality
@@ -431,26 +415,19 @@ dissimilarity_results <- dissimilarity_results %>%
   ) %>%  # Use the same value in 2001; lag for other years
   ungroup()                                  # Ungroup after calculation
 
-# Print the updated dissimilarity results
-print(dissimilarity_results)
-
 # Join the lagged Dissimilarity Index back to the original dataset if needed
 census_final_updated <- census_final_updated %>%
   left_join(dissimilarity_results %>% dplyr::select(MSOA11CD, Year, Nationality, lagged_diss),
             by = c("MSOA11CD", "Year", "Nationality"))
-
-# Print or save the updated dataset with lagged diss
-print(census_final_updated)
 ```
-
 
 ### Theil's H index
 ```{r}
-
+# Convert final_final_census to data.table
 library(data.table)
 final_census_dt <- as.data.table(census_final_updated)
 
-# Function to calculate Theil's H for a given dataframe
+# Calculate Theil's H for each MSOA and Year
 calculate_theils_h <- function(df) {
   df <- df %>%
     mutate(Theils_H = ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0))  
@@ -464,10 +441,6 @@ theils_h_results <- final_census_dt[Nationality != "Total_Population" & National
 # Merge Theil's H results back into the final_census dataframe
 final_final_census <- census_final_updated %>%
   left_join(theils_h_results, by = c("MSOA11CD", "Year"))
-
-# Check the result
-print(final_final_census)
-
 ```
 
 ### Isolation index
@@ -475,12 +448,12 @@ print(final_final_census)
 # Convert final_final_census to data.table
 final_final_census_dt <- as.data.table(final_final_census)
 
-# Function to calculate Isolation Index for a given data.table
+# Calculate Isolation Index 
 calculate_isolation_index <- function(df) {
   df[, .(Isolation_Index = sum(Proportion^2, na.rm = TRUE))]
 }
 
-# Calculate Isolation Index for each MSOA and Year using data.table
+# Calculate Isolation Index for each MSOA and Year 
 isolation_results_dt <- final_final_census_dt[
   Nationality != "Total_Population" & Nationality != "Majority", 
   calculate_isolation_index(.SD), 
@@ -489,157 +462,19 @@ isolation_results_dt <- final_final_census_dt[
 
 # Merge Isolation Index results back into the original data.table
 finalest_census_dt <- merge(final_final_census_dt, isolation_results_dt, by = c("MSOA11CD", "Year"), all.x = TRUE)
-
-# Check the result
-print(finalest_census_dt)
 ```
 
 ```{r}
-# Final cleaning
-
-# Filter out rows where Nationality is "Total_Population" or "Majority"
+# Final cleaning of columns
 finalest_census_dt <- finalest_census_dt[!(Nationality %in% c("Total_Population", "Majority"))]
-
-# Remove the columns "Total_Pop" and "Population"
-finalest_census_dt <- finalest_census_dt[, !c("Total_Pop", "Population", "lagged_diss.x"), with = FALSE]
-```
-
-EDA
-```{r}
-# Scale the Dissimilarity Index
-finalest_census_dt <- finalest_census_dt %>%
-  mutate(Dissimilarity_Index = Dissimilarity_Index * 100)
-```
-
-```{r}
-# Define nationalities
-nationalities <- unique(finalest_census_dt$Nationality)
-
-# 1. Line Graphs for Dissimilarity Index, Isolation Index, and Theil's H
-dir.create("line_graphs", showWarnings = FALSE)
-
-for (index_var in c("Dissimilarity_Index", "Isolation_Index", "H")) {
-  plot <- ggplot(finalest_census_dt, aes(x = Year, y = !!sym(index_var), color = Nationality)) +
-    geom_line(size = 1) +
-    labs(
-      title = paste(index_var, "Over Time for All Nationalities"),
-      x = "Year",
-      y = index_var,
-      color = "Nationality"
-    ) +
-    theme_minimal()
-  
-  ggsave(
-    filename = paste0("line_graphs/", index_var, "_line_graph.png"),
-    plot = plot,
-    width = 10,
-    height = 6
-  )
-}
-
-# 2. Maps for Dissimilarity Index in 2001, 2011, 2021
-dir.create("maps", showWarnings = FALSE)
-
-years_to_map <- c(2001, 2011, 2021)
-
-for (nationality in nationalities) {
-  for (year in years_to_map) {
-    map_data <- finalest_census_dt %>%
-      filter(Nationality == nationality, Year == year) %>%
-      st_as_sf()
-    
-    map_plot <- ggplot(map_data) +
-      geom_sf(aes(fill = Dissimilarity_Index), color = NA) +
-      scale_fill_viridis_c(option = "C") +
-      labs(
-        title = paste("Dissimilarity Index for", nationality, "-", year),
-        fill = "Dissimilarity Index"
-      ) +
-      theme_minimal()
-    
-    ggsave(
-      filename = paste0("maps/Dissimilarity_Map_", nationality, "_", year, ".png"),
-      plot = map_plot,
-      width = 10,
-      height = 6
-    )
-  }
-}
-```
-
-```{r}
-# Required Libraries
-library(sf)
-library(spdep)
-library(ggplot2)
-library(dplyr)
-
-# Create directory for Moran's I outputs
-dir.create("moran_outputs", showWarnings = FALSE)
-
-# Define nationalities
-nationalities <- unique(finalest_census_dt$Nationality)
-
-# Moran's I and Visualization Loop
-for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>%
-    filter(Nationality == nationality) %>%
-    st_as_sf()
-  
-  # Create neighbors list
-  nb <- poly2nb(nat_data)
-  
-  # Create spatial weights matrix
-  lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
-  
-  # Moran's I calculation for Dissimilarity Index
-  moran_test <- moran.test(nat_data$Dissimilarity_Index, lw, zero.policy = TRUE)
-  
-  # Extract Moran's I and p-value
-  moran_value <- moran_test$estimate["Moran I statistic"]
-  p_value <- moran_test$p.value
-  
-  # Save Moran's I results to a text file
-  writeLines(
-    paste(
-      "Moran's I for", nationality, "\n",
-      "Moran's I statistic:", round(moran_value, 4), "\n",
-      "p-value:", round(p_value, 4), "\n"
-    ),
-    con = paste0("moran_outputs/Moran_", nationality, ".txt")
-  )
-  
-  # Moran scatterplot visualization
-  moran_plot <- ggplot(data = nat_data) +
-    geom_point(aes(x = nat_data$Dissimilarity_Index, 
-                   y = lag.listw(lw, nat_data$Dissimilarity_Index, zero.policy = TRUE)),
-               alpha = 0.5, color = "blue") +
-    labs(
-      title = paste("Moran's Scatterplot for", nationality),
-      x = "Dissimilarity Index",
-      y = "Spatially Lagged Dissimilarity Index"
-    ) +
-    theme_minimal()
-  
-  # Save Moran scatterplot as PNG
-  ggsave(
-    filename = paste0("moran_outputs/Moran_Scatter_", nationality, ".png"),
-    plot = moran_plot,
-    width = 8,
-    height = 6
-  )
-}
 ```
 
 ## Download CSV
 ```{r}
-str(finalest_census_dt)
-
 # Remove the geometry column from the data frame
 census_no_geo <- finalest_census_dt[, !"geometry"]
 
-# Write the cleaned data frame to a CSV file
+# Download as a csv 
 write.csv(census_no_geo, "census_data.csv", row.names = FALSE)
 ```
 
