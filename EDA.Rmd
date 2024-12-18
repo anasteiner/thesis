@@ -17,7 +17,7 @@ library(readr)
 
 ```{r}
 # Load the census demographic dataset
-census_data <- read_csv("/Users/anamariasteinercorrea/thesis/census_data.csv")
+census_data <- read_csv("/Users/anamariasteinercorrea/Documents/thesis/census_data.csv")
 msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
 ```
 
@@ -207,80 +207,45 @@ for (nationality in nationalities) {
 ```
 
 ### Calculate spatial autocorrelation of diss index between nationalities
+
 ```{r}
 library(sf)
 library(dplyr)
+library(ggplot2)
+install.packages("FNN")
+library(FNN)
 
-# Directory for outputs
-dir.create("moran_outputs", showWarnings = FALSE)
+# Extract unique geometries
+unique_geometries <- msoa_census_final %>%
+  select(MSOA11CD.x, geometry) %>%
+  distinct() %>%
+  st_as_sf()
+
+# Compute k-nearest neighbors
+coords <- st_coordinates(st_centroid(unique_geometries))
+k <- 10
+knn <- get.knn(coords, k = k)
+
+# Create sparse weights matrix
+weights <- matrix(0, nrow = nrow(coords), ncol = nrow(coords))
+for (i in 1:nrow(knn$nn.index)) {
+  weights[i, knn$nn.index[i, ]] <- 1
+}
 
 # Loop through each nationality
+nationalities <- unique(msoa_census_final$Nationality)
 for (nationality in nationalities) {
   # Filter data for the current nationality
   nat_data <- msoa_census_final %>%
     filter(Nationality == nationality) %>%
-    st_as_sf()  # Ensure it's an sf object
-  
-  # Create spatial weights matrix (binary adjacency based on geometry)
-  coords <- st_coordinates(st_centroid(nat_data))  # Centroids for spatial locations
-  dist_matrix <- as.matrix(dist(coords))           # Distance matrix
-  
-  # Create binary adjacency matrix: 1 if neighbors, 0 otherwise (threshold: small distance)
-  threshold <- quantile(dist_matrix, 0.1)  # Use the 10th percentile as neighbor threshold
-  weights <- ifelse(dist_matrix > 0 & dist_matrix <= threshold, 1, 0)
-  
-  # Moran's I calculation
-  x <- nat_data$Diss_Index                       # Values
-  x_mean <- mean(x, na.rm = TRUE)                # Mean of Diss_Index
-  n <- length(x)                                 # Number of observations
-  W <- sum(weights)                              # Total weight sum
-  
-  numerator <- sum(weights * outer(x - x_mean, x - x_mean))  # Weighted cross-product
-  denominator <- sum((x - x_mean)^2)                         # Variance
-  
-  moran_I <- (n / W) * (numerator / denominator)             # Moran's I statistic
-  
-  # Save Moran's I results
-  writeLines(paste("Moran's I for", nationality, "\n",
-                   "Moran's I statistic:", round(moran_I, 4), "\n"),
-             con = paste0("moran_outputs/Moran_", nationality, ".txt"))
-  
-  # Moran Scatterplot
-  lagged_values <- (weights %*% x) / rowSums(weights)  # Spatially lagged values
-  
-  moran_plot <- ggplot(data = data.frame(Diss_Index = x, Lagged = lagged_values)) +
-    geom_point(aes(x = Diss_Index, y = Lagged), alpha = 0.5, color = "blue") +
-    labs(title = paste("Moran's Scatterplot for", nationality),
-         x = "Dissimilarity Index",
-         y = "Spatially Lagged Dissimilarity Index") +
-    theme_minimal()
-  
-  # Save Moran scatterplot
-  ggsave(filename = paste0("moran_outputs/Moran_Scatter_", nationality, ".png"),
-         plot = moran_plot, width = 8, height = 6)
-}
-```
+    select(MSOA11CD.x, Diss_Index) %>%
+    distinct()  # Ensure unique rows per MSOA
 
-```{r}
-set.seed(123)  # Ensure reproducibility
+  # Map Dissimilarity Index to unique geometries
+  nat_data <- unique_geometries %>%
+    left_join(nat_data, by = "MSOA11CD.x")
 
-# Number of random permutations
-n_simulations <- 999  
-
-# Run for each nationality
-for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- msoa_census_final %>%
-    filter(Nationality == nationality) %>%
-    st_as_sf()
-
-  # Create spatial weights
-  coords <- st_coordinates(st_centroid(nat_data))
-  dist_matrix <- as.matrix(dist(coords))
-  threshold <- quantile(dist_matrix, 0.1)
-  weights <- ifelse(dist_matrix > 0 & dist_matrix <= threshold, 1, 0)
-
-  # Original Moran's I calculation
+  # Calculate Moran's I
   x <- nat_data$Diss_Index
   x_mean <- mean(x, na.rm = TRUE)
   n <- length(x)
@@ -290,31 +255,37 @@ for (nationality in nationalities) {
   observed_moran_I <- (n / W) * (numerator / denominator)
 
   # Permutation test
-  simulated_moran_I <- numeric(n_simulations)
-
-  for (i in 1:n_simulations) {
-    shuffled_x <- sample(x)  # Shuffle Dissimilarity Index values
+  simulated_moran_I <- numeric(999)
+  for (i in 1:999) {
+    shuffled_x <- sample(x)
     numerator_perm <- sum(weights * outer(shuffled_x - mean(shuffled_x), shuffled_x - mean(shuffled_x)))
     simulated_moran_I[i] <- (n / W) * (numerator_perm / denominator)
   }
-
-  # Calculate p-value
   p_value <- mean(simulated_moran_I >= observed_moran_I)
 
-  # Save Moran's I results with p-value
+  # Save Moran's I results
   writeLines(paste("Moran's I for", nationality, "\n",
                    "Moran's I statistic:", round(observed_moran_I, 4), "\n",
                    "P-value:", round(p_value, 4), "\n"),
              con = paste0("moran_outputs/Moran_", nationality, ".txt"))
 
-  # Print results to console
-  cat("Nationality:", nationality, "\n",
-      "Observed Moran's I:", round(observed_moran_I, 4), "\n",
-      "P-value:", round(p_value, 4), "\n\n")
+  # Moran Scatterplot
+  lagged_values <- (weights %*% x) / rowSums(weights)
+  moran_plot <- ggplot(data = data.frame(Diss_Index = x, Lagged = lagged_values)) +
+    geom_point(aes(x = Diss_Index, y = Lagged), alpha = 0.5, color = "blue") +
+    labs(title = paste("Moran's Scatterplot for", nationality),
+         x = "Dissimilarity Index",
+         y = "Spatially Lagged Dissimilarity Index") +
+    theme_minimal()
+
+  # Save Moran scatterplot
+  ggsave(filename = paste0("moran_outputs/Moran_Scatter_", nationality, ".png"),
+         plot = moran_plot, width = 8, height = 6)
 }
 ```
+
 ```{r}
-Moran's I	Meaning
+# Moran's I	Meaning
 > 0	Positive spatial autocorrelation (clustering)
 < 0	Negative spatial autocorrelation (dispersion)
 ≈ 0	No spatial autocorrelation (random)
@@ -325,22 +296,47 @@ P-Value	Interpretation
 
 ### Visualice maps of diss index between nationalities and through time
 ```{r}
+library(ggplot2)
+library(sf)
+
+# Ensure the dataset is an sf object
+if (!st_is_sf(msoa_census_final)) {
+  msoa_census_final <- st_as_sf(msoa_census_final)
+}
+
 # Create directory for spatial maps
 dir.create("spatial_maps", showWarnings = FALSE)
 
-# Plot map for Dissimilarity Index for all MSOAs
-diss_map <- ggplot(msoa_census_final) +
-  geom_sf(aes(fill = Diss_Index, geometry = geometry), color = NA) +
-  scale_fill_viridis_c(option = "C", name = "Dissimilarity Index") +
-  labs(title = "Dissimilarity Index Across London (All Nationalities)",
-       caption = "Source: Census Data") +
-  theme_minimal() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-        legend.position = "right")
+# Loop through each nationality to create maps
+nationalities <- unique(msoa_census_final$Nationality)
 
-# Save the plot
-ggsave(filename = "spatial_maps/Dissimilarity_Index_London.png",
-       plot = diss_map, width = 12, height = 8)
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- msoa_census_final %>%
+    filter(Nationality == nationality)
+  
+  # Plot map for the current nationality
+  diss_map <- ggplot(nat_data) +
+    geom_sf(aes(fill = Diss_Index, geometry = geometry), color = NA) +
+    scale_fill_viridis_c(option = "C", name = "Dissimilarity Index") +
+    labs(
+      title = paste("Dissimilarity Index Across London -", nationality),
+      caption = "Source: Census Data"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
+    )
+  
+  # Save the plot
+  ggsave(
+    filename = paste0("spatial_maps/Dissimilarity_Index_", nationality, ".png"),
+    plot = diss_map,
+    width = 12,
+    height = 8
+  )
+}
 ```
 
 ### Borough-Level Statistics for Dissimilarity Index
@@ -373,7 +369,7 @@ change_stats <- msoa_census_final %>%
 top_msoas <- change_stats %>%
   arrange(desc(Diss_Index_Change)) %>%
   group_by(Nationality) %>%
-  slice_head(n = 10)  # Top 10 MSOAs for each nationality
+  slice_head(n = 10)  
 
 # View top MSOAs
 print(top_msoas)
@@ -387,7 +383,7 @@ top_boroughs <- change_stats %>%
   ) %>%
   arrange(desc(Total_Change)) %>%
   group_by(Nationality) %>%
-  slice_head(n = 10)  # Top 10 boroughs for each nationality
+  slice_head(n = 10)  
 
 # View top boroughs
 print(top_boroughs)

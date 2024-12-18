@@ -340,128 +340,46 @@ cleaned_joined_tenure <- joined_tenure %>%
   drop_na()
 
 # Interpolate missing years
-years <- seq(2001, 2021, by = 2)
-# Process the data
+years <- seq(2001, 2021, by = 2)  # Generate desired year range
+
 interpolated_tenure <- cleaned_joined_tenure %>%
   pivot_longer(cols = -`LSOA code`, names_to = "variable", values_to = "value") %>%
   separate(variable, into = c("year", "category"), sep = " ") %>%
-  mutate(year = as.numeric(year)) %>%
-  complete(`LSOA code`, category, year = years) %>%
+  mutate(
+    year = as.numeric(year),    # Ensure 'year' is numeric
+    value = as.numeric(value)  # Ensure 'value' is numeric
+  ) %>%
+  complete(`LSOA code`, category, year = years) %>%  # Fill all combinations
   group_by(`LSOA code`, category) %>%
-  arrange(year) %>%
-  mutate(value = zoo::na.approx(value, maxgap = Inf, na.rm = FALSE)) 
+  arrange(year) %>%  # Ensure data is sorted by year
+  mutate(value = zoo::na.approx(value, maxgap = Inf, na.rm = FALSE)) %>%  # Interpolate
+  ungroup()
+
+# Convert to wide format
+wide_tenure <- interpolated_tenure %>%
+  pivot_wider(
+    names_from = category,  # Use 'category' values as column names
+    values_from = value     # Fill these columns with 'value'
+  )
 
 # Calculate at msoa level
 lsoa_tenure <- lsoa %>%
-  left_join(interpolated_tenure, by = c("LSOA11CD" = "LSOA code"))
+  left_join(wide_tenure, by = c("LSOA11CD" = "LSOA code"))
+
 # Select the required columns
 selected_tenure <- lsoa_tenure %>%
-  dplyr::select(MSOA11CD, category, year, value)
+  dplyr::select(MSOA11CD, Owned, Rented, Social, year)
 
-wide_tenure <- selected_tenure %>%
-  pivot_wider(names_from = category,
-values_from = value)
-
-# get unique msoa values
-library(dplyr)
-# Grouping by MSOA and year, then calculating average tenure (Owned, Rented, Social)
-grouped_data <- wide_tenure %>%
-  group_by(MSOA11CD, year) %>%
-  summarise(
-    average_owned = mean(Owned, na.rm = TRUE),
-    average_rented = mean(Rented, na.rm = TRUE),
-    average_social = mean(Social, na.rm = TRUE)
-  )
-
-# Add London data
-library(stringr)
-
-# Rename columns 1 and 2
-tenure_FINAL <- tenure_FINAL %>%
-  rename(
-    MSOA11CD = 1,
-    MSOA11NM = 2
-  )
-
-tenure_FINAL <- tenure_FINAL %>%
-  mutate(across(
-    -c(MSOA11CD, MSOA11NM), 
-    ~ as.numeric(gsub("[^0-9.]", "", .)), 
-    .names = "cleaned_{col}"
-  ))
-
-# Ensure all relevant columns have the same data type
-tenure_FINAL <- tenure_FINAL %>%
-  mutate(across(matches("^\\d{4}_"), as.numeric)) 
-
-# Reshape the data to long format
-tenure_LONG <- tenure_FINAL %>%
-  pivot_longer(
-    cols = matches("^\\d{4}_"), 
-    names_to = "Category_Year", 
-    values_to = "Value" 
+# Calculate the average for each MSOA11CD and year
+average_tenure <- selected_tenure %>%
+  group_by(MSOA11CD, year) %>%  # Group by MSOA11CD and year
+  summarize(
+    Owned = mean(Owned, na.rm = TRUE),
+    Rented = mean(Rented, na.rm = TRUE),
+    Social = mean(Social, na.rm = TRUE),
+    geometry = first(geometry)  # Retain the geometry column
   ) %>%
-  separate(
-    col = Category_Year, 
-    into = c("Year", "Category"), 
-    sep = "_", 
-    convert = TRUE 
-  )
-
-# Calculate averages
-tenure_LONG <- tenure_LONG %>%
-  group_by(MSOA11CD, MSOA11NM, Year) %>%
-  summarise(
-    Total = sum(Value[Category == "Total"]),
-    average_owned = sum(Value[Category == "Own Outright"] + Value[Category == "Buying with mortgage"]) / Total,
-    average_rented = sum(Value[Category == "Rented from Private landlord"]) / Total,
-    average_social = sum(Value[Category == "Rented from Local Authority or Housing Association"]) / Total
-  ) %>%
-  ungroup()
-
-# Filter to keep only row 34 (London information)
-tenure_FINAL_long_filtered <- tenure_LONG %>%
-  filter(MSOA11CD == "E12000007")
-
-# Keep only necessary columns
-tenure_FINAL_long_filtered <- tenure_FINAL_long_filtered %>%
-  dplyr::select(MSOA11CD, MSOA11NM, Year, average_owned, average_rented, average_social)
-
-# Define the complete range of years
-all_years <- 2001:2021
-
-# Interpolate the missing years for each average column
-interpolated_tenure <- tenure_FINAL_long_filtered %>%
-  group_by(MSOA11CD, MSOA11NM) %>%                
-  complete(Year = all_years) %>%                  
-  arrange(Year) %>%                               
-  mutate(
-    average_owned = if (sum(!is.na(average_owned)) > 1) {
-      approx(x = Year[!is.na(average_owned)], 
-             y = average_owned[!is.na(average_owned)], 
-             xout = Year, 
-             rule = 2)$y
-    } else {
-      average_owned
-    },
-    average_rented = if (sum(!is.na(average_rented)) > 1) {
-      approx(x = Year[!is.na(average_rented)], 
-             y = average_rented[!is.na(average_rented)], 
-             xout = Year, 
-             rule = 2)$y
-    } else {
-      average_rented
-    },
-    average_social = if (sum(!is.na(average_social)) > 1) {
-      approx(x = Year[!is.na(average_social)], 
-             y = average_social[!is.na(average_social)], 
-             xout = Year, 
-             rule = 2)$y
-    } else {
-      average_social
-    }
-  ) %>%
-  ungroup()
+  ungroup()  # Remove grouping for further operations
 ```
 
 ### Social Budget data
@@ -663,32 +581,10 @@ interpolated_rents <- rents_long %>%
 
 ## Final housing data
 ```{r}
-# Filter datasets for odd years
-datasets <- list(
-  interpolated_rents,
-  final_budget,
-  interpolated_tenure,
-  combined_houseprice,
-  accommodation_with_london
-)
-
-filtered_datasets <- lapply(datasets, function(data) {
-  data %>%
-    mutate(Year = as.numeric(as.character(Year))) %>% # Ensure Year is numeric
-    filter(Year %% 2 != 0)                            # Keep only odd years
-})
-
-# Assign filtered datasets back to their original names
-interpolated_rents <- filtered_datasets[[1]]
-final_budget <- filtered_datasets[[2]]
-final_tenancy <- filtered_datasets[[3]]
-combined_houseprice <- filtered_datasets[[4]]
-accommodation_with_london <- filtered_datasets[[5]]
-
 datasets_with_geometry <- list(
   interpolated_rents,
   final_budget,
-  final_tenancy,
+  average_tenure,
   combined_houseprice,
   accommodation_with_london
 )
@@ -704,14 +600,14 @@ standardized_datasets <- lapply(datasets_with_geometry, function(data) {
 # Assign standardized datasets back to their names
 interpolated_rents <- standardized_datasets[[1]]
 final_budget <- standardized_datasets[[2]]
-final_tenancy <- standardized_datasets[[3]]
+average_tenure <- standardized_datasets[[3]]
 combined_houseprice <- standardized_datasets[[4]]
 accommodation_with_london <- standardized_datasets[[5]]
 
 # Assign CRS-standardized datasets back to their names
 interpolated_rents <- standardized_datasets[[1]]
 final_budget <- standardized_datasets[[2]]
-final_tenancy <- standardized_datasets[[3]]
+average_tenure <- standardized_datasets[[3]]
 combined_houseprice <- standardized_datasets[[4]]
 accommodation_with_london <- standardized_datasets[[5]]
 
@@ -719,7 +615,7 @@ accommodation_with_london <- standardized_datasets[[5]]
 joined_data <- interpolated_rents %>%
   st_drop_geometry() %>%
   left_join(st_drop_geometry(final_budget), by = c("MSOA11CD", "Year")) %>%
-  left_join(st_drop_geometry(final_tenancy), by = c("MSOA11CD", "Year")) %>%
+  left_join(st_drop_geometry(average_tenure), by = c("MSOA11CD")) %>%
   left_join(st_drop_geometry(combined_houseprice), by = c("MSOA11CD", "Year")) %>%
   left_join(st_drop_geometry(accommodation_with_london), by = c("MSOA11CD", "Year"))
 
@@ -731,9 +627,9 @@ cleaned_housing <- joined_data %>%
     Year,
     Rent,
     budget_proportion,
-    average_owned,
-    average_rented,
-    average_social,
+    Owned,
+    Rented,
+    Social,
     Houseprice,
     Occupation
   )
@@ -743,32 +639,32 @@ manual_values <- tibble(
   MSOA11CD = "London",
   MSOA11NM = "London",
   Year = c(2001, 2003, 2005, 2007, 2009, 2011, 2013, 2015, 2017, 2019, 2021),
-  average_owned = c(0.5557597, 0.5557597, 0.5557597, 0.5534036, 0.5322169, 0.5061974, 
+  Owned = c(0.5557597, 0.5557597, 0.5557597, 0.5534036, 0.5322169, 0.5061974, 
                     0.5193679, 0.5167916, 0.5241732, 0.5064820, 0.5459837),
-  average_rented = c(0.18802592, 0.18802592, 0.18802592, 0.19389581, 0.22340161, 
+  Rented = c(0.18802592, 0.18802592, 0.18802592, 0.19389581, 0.22340161, 
                      0.24892051, 0.24442112, 0.24791433, 0.25317208, 0.26583293, 0.24447031),
-  average_social = c(0.25621433, 0.25621433, 0.25621433, 0.25270054, 0.24438150, 
+  Social = c(0.25621433, 0.25621433, 0.25621433, 0.25270054, 0.24438150, 
                      0.24485105, 0.23621099, 0.23529412, 0.22265474, 0.22765647, 0.20954598)
 )
 
 # Update the relevant rows in cleaned_housing
 cleaned_housing <- cleaned_housing %>%
   mutate(
-    average_owned = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
-                           manual_values$average_owned[match(Year, manual_values$Year)], 
-                           average_owned),
-    average_rented = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
-                            manual_values$average_rented[match(Year, manual_values$Year)], 
-                            average_rented),
-    average_social = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
-                            manual_values$average_social[match(Year, manual_values$Year)], 
-                            average_social)
+    Owned = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
+                           manual_values$Owned[match(Year, manual_values$Year)], 
+                           Owned),
+    Rented = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
+                            manual_values$Rented[match(Year, manual_values$Year)], 
+                            Rented),
+    Social = ifelse(MSOA11CD == "London" & Year %in% manual_values$Year, 
+                            manual_values$Social[match(Year, manual_values$Year)], 
+                            Social)
   )
 ```
 
 ```{r}
 # Specify columns for which you want to create lagged-1 versions
-columns_to_lag <- c("Rent", "budget_proportion", "Houseprice", "Occupation", "average_social")
+columns_to_lag <- c("Rent", "budget_proportion", "Houseprice", "Occupation", "Owned")
 
 # Create lagged-1 columns
 cleaned_housing <- cleaned_housing %>%
@@ -839,6 +735,7 @@ borough_greenery$MSOA_percent_green <- borough_greenery$population_proportion * 
 # Select relevant columns for the result
 msoa_green <- dplyr::select(borough_greenery, MSOA11CD, MSOA11NM, Year, MSOA_percent_green)
 ```
+
 ### Crime
 
 ```{r}
@@ -908,6 +805,7 @@ borough_crime$MSOA_crime <- borough_crime$population_proportion * borough_crime$
 # Select relevant columns for the result
 msoa_crime <- dplyr::select(borough_crime, MSOA11CD, MSOA11NM, Year, MSOA_crime)
 ```
+
 ### PTAL 
 
 ```{r}
