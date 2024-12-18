@@ -24,9 +24,9 @@ library(zoo)
 ```{r}
 # Read the datasets
 setwd("/Users/anamariasteinercorrea/thesis")
-census_data <- read_csv("/Users/anamariasteinercorrea/thesis/census_data.csv")
-housing_data <- read_csv("/Users/anamariasteinercorrea/thesis/housing_data.csv")
-neighborhood_data <- read_csv("/Users/anamariasteinercorrea/thesis/neighborhood_data.csv")
+census_data <- read_csv("/Users/anamariasteinercorrea/Documents/thesis/census_data.csv")
+housing_data <- read_csv("/Users/anamariasteinercorrea/Documents/thesis/housing_data.csv")
+neighborhood_data <- read_csv("/Users/anamariasteinercorrea/Documents/thesis/neighborhood_data.csv")
 msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
 ```
 
@@ -62,26 +62,24 @@ final_segregation <- segregation_sf %>%
     Year,
     Rent,
     Socialhousing = budget_proportion,
-    Ownership = average_owned,
-    average_rented,
-    average_social,
+    Owned,
     Houseprice,
     Overoccupation = Occupation,
     geometry,
-    MSOA_crime,
-    MSOA_percent_green,
+    Crime = MSOA_crime,
+    Greenery = MSOA_percent_green,
     PTAL,
     Nationality,
-    Proportion,
-    Dissimilarity_Index,
+    Proportion = Proportion.x,
+    Diss_Index,
     lagged_diss,
     lagged_Rent,
-    lagged_socialhousing = lagged_average_social,
+    lagged_Owned,
     lagged_Houseprice,
     lagged_Occupation
   ) 
 
-filtered_segregation<- final_segregation %>%
+filtered_segregation <- final_segregation %>%
   filter(MSOA11NM != "London")
 ```
 
@@ -90,64 +88,170 @@ filtered_segregation<- final_segregation %>%
 ### Correlation matrix for each nationality
 
 ```{r}
-library(dplyr)
 library(ggcorrplot)
+library(dplyr)
+library(sf)
 
-# Create a directory for correlation matrix outputs
+# Directory for correlation matrices
 dir.create("correlation_matrices", showWarnings = FALSE)
 
-# Define housing and neighborhood variables
-x_vars <- c("Rent", "Socialhousing", "Ownership", "average_rented", "average_social", 
-            "Houseprice", "Overoccupation", "MSOA_crime", "MSOA_percent_green", "PTAL")
-
-# Loop through each nationality to compute and save correlation matrices
-nationalities <- unique(finalest_census_dt$Nationality)
-
-for (nationality in nationalities) {
-  # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
+# Loop through each nationality
+for (nationality in unique(filtered_segregation$Nationality)) {
+  # Filter data for the current nationality and drop geometry
+  nat_data <- filtered_segregation %>%
+    filter(Nationality == nationality) %>%
+    st_drop_geometry()  # Drop the geometry column
   
-  # Subset variables for correlation
-  correlation_data <- nat_data %>% select(Dissimilarity_Index, all_of(x_vars))
+  # Subset relevant variables for correlation
+  correlation_data <- nat_data %>%
+    select(
+      Diss_Index, Proportion, Rent, Socialhousing, Owned, Houseprice,
+      Overoccupation, Crime, Greenery, PTAL,
+      lagged_diss
+    )
   
-  # Compute correlation matrix
-  corr_matrix <- cor(correlation_data, use = "complete.obs")
+  # Remove rows with missing values
+  correlation_data <- correlation_data %>%
+    na.omit()
   
-  # Visualize and save the correlation matrix
-  corr_plot <- ggcorrplot(corr_matrix, method = "circle", title = paste("Correlation Matrix for", nationality)) +
-    theme_minimal()
-  
-  ggsave(filename = paste0("correlation_matrices/correlation_matrix_", nationality, ".png"),
-         plot = corr_plot, width = 10, height = 6)
+  # Check if enough variables remain for correlation
+  if (nrow(correlation_data) > 0 && ncol(correlation_data) > 1) {
+    # Compute the correlation matrix
+    corr_matrix <- cor(correlation_data, use = "complete.obs")
+    
+    # Visualize and save the correlation matrix
+    corr_plot <- ggcorrplot(corr_matrix, method = "circle",
+                            title = paste("Correlation Matrix for", nationality)) +
+      theme_minimal()
+    
+    ggsave(filename = paste0("correlation_matrices/correlation_matrix_", nationality, ".png"),
+           plot = corr_plot, width = 10, height = 6)
+  } else {
+    message(paste("Not enough valid data for correlation for nationality:", nationality))
+  }
 }
+```
+
+```{r}
+Variable	Direction	Strength	Description
+Proportion	Positive (Red)	Strong	Higher group proportion is associated with a higher Diss_Index.
+Rent	Positive (Red)	Moderate-Strong	Higher rental levels are correlated with higher Diss_Index.
+Socialhousing	Positive (Red)	Moderate	Greater social housing provision correlates with higher Diss_Index.
+Owned	Negative (Blue)	Moderate	Higher ownership rates are associated with lower Diss_Index.
+Houseprice	Negative (Blue)	Moderate	Higher house prices correlate with lower Diss_Index (less segregation).
+Overoccupation	Positive (Red)	Moderate	Higher overoccupation is associated with higher Diss_Index.
+Crime	Positive (Red)	Weak-Moderate	Higher crime levels are weakly correlated with higher Diss_Index.
+Greenery	Negative (Blue)	Weak	More greenery is weakly associated with lower Diss_Index.
+PTAL (Transport)	Negative (Blue)	Weak	Better public transport access relates weakly to lower Diss_Index.
+Lagged Variables	Mixed	Moderate	Some lagged variables (e.g., lagged_Rent, lagged_diss) show strong correlations.
+3. Key Insights
+Proportion:
+The strongest positive correlation with Diss_Index, suggesting that areas with higher proportions of a specific group also tend to have higher segregation.
+Housing Tenure:
+Rent and Socialhousing are positively correlated with segregation.
+Owned is negatively correlated, indicating that higher ownership rates are linked to lower levels of segregation.
+Economic Factors:
+Houseprice has a negative correlation, which suggests that higher house prices are linked to lower segregation, possibly due to barriers to access.
+Social Indicators:
+Overoccupation and Crime show positive correlations, indicating a potential association between socioeconomic stressors and higher segregation.
+Environment and Accessibility:
+Greenery and PTAL have weak negative correlations, meaning better access to greenery or public transport is slightly associated with lower segregation.
+Lagged Variables:
+Lagged versions of variables (e.g., lagged_Rent, lagged_diss) are significantly correlated, which suggests temporal persistence in relationships.
+4. Implications for Modeling:
+Multicollinearity Risk:
+The strong correlations between Diss_Index and several predictors (e.g., Proportion, Rent, lagged_diss) suggest multicollinearity issues when building a regression or GWR model.
+Use methods like VIF or regularization (Ridge/Lasso) to manage this.
+Variable Selection:
+Consider dropping or transforming highly correlated predictors (e.g., between Proportion and Diss_Index).
+Alternatively, Proportion could serve as a competing dependent variable.
+Potential Predictors:
+Variables such as Owned, Houseprice, Overoccupation, and Socialhousing can provide meaningful relationships with Diss_Index, as they show moderate correlations and distinct associations.
+```
+
+```{r}
+# Load required libraries
+library(dplyr)
+
+# Replace 'filtered_segregation' with your actual dataset
+predictors <- filtered_segregation %>%
+  st_drop_geometry() %>%  # Drop geometry if it's an sf object
+  select(Proportion, Rent, Socialhousing, Owned, Houseprice,
+      Overoccupation, Crime, Greenery, PTAL,
+      lagged_diss) %>% 
+  na.omit()  # Ensure no missing values
+
+# Function to calculate VIF manually
+calculate_vif <- function(data) {
+  vif_values <- sapply(names(data), function(var) {
+    # Create a formula regressing each variable on all others
+    formula <- as.formula(paste(var, "~ ."))
+    r_squared <- summary(lm(formula, data = data))$r.squared  # Get R²
+    vif <- 1 / (1 - r_squared)  # Calculate VIF
+    return(vif)
+  })
+  return(vif_values)
+}
+
+# Calculate VIF for predictors
+vif_results <- calculate_vif(predictors)
+
+# Print VIF results
+print(vif_results)
+```
+
+```{r}
+The latest VIF results indicate that all predictors fall within acceptable thresholds, with values ranging from 1.29 to 3.97, suggesting minimal multicollinearity. Variables such as Proportion (1.33), Socialhousing (1.29), Rent (1.54), and Houseprice (1.87) show no multicollinearity concerns, while Overoccupation (3.97) and lagged_diss (3.11) remain slightly higher but still well below problematic levels. These results confirm that the predictors can be included in the model without destabilizing the regression coefficients. Moving forward, I will continue to monitor VIF values when introducing new variables or adjustments to ensure multicollinearity remains within acceptable bounds, maintaining the robustness and interpretability of the analysis.
 ```
 
 ### Scatterplot for individual correlations
 
 ```{r}
 library(ggplot2)
+library(dplyr)
 
-# Create a directory for scatterplot outputs
+# Ensure directory for scatterplot outputs exists
 dir.create("scatterplots", showWarnings = FALSE)
 
-for (nationality in nationalities) {
+# Specify the variables for scatterplots
+x_vars <- c("Rent", "Socialhousing", "Owned", "Houseprice", 
+            "Overoccupation", "Crime", "Greenery", "PTAL", "lagged_diss")
+
+# Loop through each nationality
+for (nationality in unique(filtered_segregation$Nationality)) {
   # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
+  nat_data <- filtered_segregation %>%
+    filter(Nationality == nationality)
   
-  # Generate scatterplots for each variable
+  # Generate scatterplots for each specified variable
   for (x_var in x_vars) {
-    scatter_plot <- ggplot(nat_data, aes_string(x = x_var, y = "Dissimilarity_Index")) +
-      geom_point(alpha = 0.5, color = "blue") +
-      geom_smooth(method = "lm", se = FALSE, color = "red") +
-      labs(title = paste("Scatterplot for", nationality, "-", x_var),
-           x = x_var, y = "Dissimilarity Index") +
-      theme_minimal()
-    
-    # Save the scatterplot
-    ggsave(filename = paste0("scatterplots/scatterplot_", nationality, "_", x_var, ".png"),
-           plot = scatter_plot, width = 10, height = 6)
+    if (x_var %in% colnames(nat_data)) {  # Ensure variable exists in the data
+      scatter_plot <- ggplot(nat_data, aes_string(x = x_var, y = "Diss_Index")) +
+        geom_point(alpha = 0.5, color = "blue") +  # Scatter points
+        geom_smooth(method = "lm", se = FALSE, color = "red") +  # Linear trendline
+        labs(
+          title = paste("Scatterplot for", nationality, "-", x_var),
+          x = x_var,
+          y = "Dissimilarity Index"
+        ) +
+        theme_minimal()
+      
+      # Save the scatterplot
+      ggsave(
+        filename = paste0("scatterplots/scatterplot_", nationality, "_", x_var, ".png"),
+        plot = scatter_plot,
+        width = 10,
+        height = 6
+      )
+    } else {
+      message(paste("Variable", x_var, "not found for nationality:", nationality))
+    }
   }
 }
+```
+
+```{r}
+
 ```
 
 ### CCFs for individual correlations
@@ -160,11 +264,11 @@ dir.create("ccfs", showWarnings = FALSE)
 
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>% filter(Nationality == nationality)
+  nat_data <- filtered_segregation %>% filter(Nationality == nationality)
   
   for (x_var in x_vars) {
     # Compute the CCF between Dissimilarity Index and the variable
-    ccf_plot <- ccf(nat_data$Dissimilarity_Index, nat_data[[x_var]], lag.max = 10, plot = TRUE,
+    ccf_plot <- ccf(nat_data$Diss_Index, nat_data[[x_var]], lag.max = 10, plot = TRUE,
                     main = paste("CCF for", nationality, "-", x_var))
     
     # Save the plot
@@ -191,10 +295,10 @@ library(car)
 install.packages("stargazer")
 library(stargazer)
 install.packages("sjPlot")
-library(sjPlot)    # For styled regression tables
+library(sjPlot)   
 
 # Define variables
-housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", include lagged)
+housing_variables <- c("Rent", "budget_proportion", "average_owned", "Houseprice", "Occupation", "lagged_diss")
 neighborhood_variables <- c("MSOA_crime", "MSOA_percent_green", "PTAL")
 nationalities <- c("Bangladesh", "Caribbean", "Poland", "Romania", "SEAfrica", "SouthAmerica")
 
@@ -213,29 +317,29 @@ for (nationality in nationalities) {
   numeric_data <- numeric_data %>% filter(complete.cases(select(., all_of(c(housing_variables, neighborhood_variables, "lagged_diss")))))
   
   # Define dependent variable
-  y_variable <- "scaled_Dissimilarity_Index"
+  y_variable <- "Diss_Index"
   
   # Initialize list to store models
   models <- list()
   
   # 1. Regressions for individual housing variables
   for (housing_var in housing_variables) {
-    formula <- as.formula(paste(y_variable, "~", paste0("scaled_", housing_var)))
+    formula <- as.formula(paste(y_variable, "~", paste0("Diss_Index", housing_var)))
     model <- lm(formula, data = scaled_data)
     models[[paste0("Housing_", housing_var)]] <- model
   }
   
   # 2. Model with lagged settlement
   lagged_formula <- as.formula(paste(y_variable, "~", 
-                                     paste(paste0("scaled_", housing_variables), collapse = " + "), 
-                                     "+ scaled_lagged_diss"))
+                                     paste(paste0("Diss_Index", housing_variables), collapse = " + "), 
+                                     "+ lagged_diss"))
   models[["WithLaggedSettlement"]] <- lm(lagged_formula, data = scaled_data)
   
   # 3. Full model with neighborhood variables
   full_formula <- as.formula(paste(y_variable, "~", 
-                                   paste(paste0("scaled_", housing_variables), collapse = " + "), 
-                                   "+ scaled_lagged_diss +", 
-                                   paste(paste0("scaled_", neighborhood_variables), collapse = " + ")))
+                                   paste(paste0("Diss_Index", housing_variables), collapse = " + "), 
+                                   "+ lagged_diss +", 
+                                   paste(paste0("Diss_Index", neighborhood_variables), collapse = " + ")))
   models[["FullModel"]] <- lm(full_formula, data = scaled_data)
   
   # Check for multicollinearity in the full model
