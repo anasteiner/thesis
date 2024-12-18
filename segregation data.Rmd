@@ -358,121 +358,138 @@ census_final$Proportion <- ifelse(census_final$Proportion == 0, 0.00001, census_
 ### Dissimilarity index
 
 #### Dissimiliarity index
+
 ```{r}
-# Specify nationalities for calculations
-nationalities <- c("Romania", "Poland", "Caribbean", "SouthAmerica", "SEAfrica", "Bangladesh")
+library(tidyverse)
+# Reshape dataset to wide format
+wide_census <- census_final %>%
+  pivot_wider(
+    names_from = Nationality, 
+    values_from = c(Population, Proportion)
+  )
 
-# Specify years for calculations
-years <- unique(census_final$Year)
+library(dplyr)
 
-# Create a new dataframe
-dissimilarity_results <- data.frame(MSOA11CD = character(), Year = integer(), Nationality = character(), Dissimilarity_Index = numeric(), stringsAsFactors = FALSE)
+# Drop specific columns
+wide_census <- wide_census %>%
+  select(-Population_Total_Population, -Population_NA, -Proportion_Total_Population, -Proportion_NA)
 
-for (year in years) {
-  for (nat in nationalities) {
-    data_majority <- census_final %>%
-      filter(Nationality == "Majority" & Year == year) %>%
-      st_drop_geometry() %>%  
-      dplyr::select(MSOA11CD, Year, Population) %>%
-      rename(Population_majority = Population)
-    
-    data_nationality <- census_final %>%
-      filter(Nationality == nat & Year == year) %>%
-      st_drop_geometry() %>%  
-      dplyr::select(MSOA11CD, Year, Population) %>%
-      rename(Population_nat = Population)
-    
-    merged_data <- merge(data_majority, data_nationality, by = c("MSOA11CD", "Year"))
-    
-    if (nrow(merged_data) > 0) {
-      total_majority <- sum(merged_data$Population_majority)
-      total_nat <- sum(merged_data$Population_nat)
-      
-      merged_data <- merged_data %>%
-        mutate(Dissimilarity = 0.5 * abs((Population_majority / total_majority) - (Population_nat / total_nat)))
+library(dplyr)
 
-      dissimilarity_results <- rbind(dissimilarity_results, 
-                                     data.frame(MSOA11CD = merged_data$MSOA11CD, 
-                                                Year = merged_data$Year, 
-                                                Nationality = nat, 
-                                                Dissimilarity_Index = merged_data$Dissimilarity))
-    }
-  }
+# Function to calculate Dissimilarity Index for one nationality
+calculate_diss_index <- function(minority_proportion, majority_proportion) {
+  0.5 * abs(minority_proportion - majority_proportion)
 }
 
-# Join the Dissimilarity Index back to the original dataset 
-census_final_updated <- census_final %>%
-  left_join(dissimilarity_results, by = c("MSOA11CD", "Year", "Nationality"))
-```
-#### Lagged diss (-1)
-```{r}
-# Calculate the lagged dissimilarity
-dissimilarity_results <- dissimilarity_results %>%
-  arrange(MSOA11CD, Nationality, Year) %>%  # Sort by MSOA, Nationality, and Year
-  group_by(MSOA11CD, Nationality) %>%       # Group by MSOA and Nationality
+# Calculate the Dissimilarity Index for each nationality
+wide_census<- wide_census %>%
+  rowwise() %>%
   mutate(
-    lagged_diss = if_else(Year == 2001, Dissimilarity_Index, lag(Dissimilarity_Index, n = 1))
-  ) %>%  # Use the same value in 2001; lag for other years
-  ungroup()                                  # Ungroup after calculation
+    Diss_Index_Bangladesh = calculate_diss_index(Proportion_Bangladesh, Proportion_Majority),
+    Diss_Index_Caribbean = calculate_diss_index(Proportion_Caribbean, Proportion_Majority),
+    Diss_Index_Poland = calculate_diss_index(Proportion_Poland, Proportion_Majority),
+    Diss_Index_Romania = calculate_diss_index(Proportion_Romania, Proportion_Majority),
+    Diss_Index_SEAfrica = calculate_diss_index(Proportion_SEAfrica, Proportion_Majority),
+    Diss_Index_SouthAmerica = calculate_diss_index(Proportion_SouthAmerica, Proportion_Majority)
+  ) %>%
+  ungroup() 
 
-# Join the lagged Dissimilarity Index back to the original dataset if needed
-census_final_updated <- census_final_updated %>%
-  left_join(dissimilarity_results %>% dplyr::select(MSOA11CD, Year, Nationality, lagged_diss),
-            by = c("MSOA11CD", "Year", "Nationality"))
+# Drop specific columns
+wide_census <- wide_census %>%
+  select(-Dissimilarity_Index)
 ```
 
-### Theil's H index
+#### Lagged diss (-1)
+
 ```{r}
-# Convert final_final_census to data.table
-library(data.table)
-final_census_dt <- as.data.table(census_final_updated)
+# Calculate the lagged dissimilarity index for each nationality
+wide_census<- wide_census %>%
+  arrange(MSOA11CD, Year) %>%  # Ensure data is sorted by MSOA and Year
+  group_by(MSOA11CD) %>%       # Group by MSOA (no Nationality needed in wide format)
+  mutate(
+    lagged_diss_Bangladesh = if_else(Year == 2001, Diss_Index_Bangladesh, lag(Diss_Index_Bangladesh)),
+    lagged_diss_Caribbean = if_else(Year == 2001, Diss_Index_Caribbean, lag(Diss_Index_Caribbean)),
+    lagged_diss_Poland = if_else(Year == 2001, Diss_Index_Poland, lag(Diss_Index_Poland)),
+    lagged_diss_Romania = if_else(Year == 2001, Diss_Index_Romania, lag(Diss_Index_Romania)),
+    lagged_diss_SEAfrica = if_else(Year == 2001, Diss_Index_SEAfrica, lag(Diss_Index_SEAfrica)),
+    lagged_diss_SouthAmerica = if_else(Year == 2001, Diss_Index_SouthAmerica, lag(Diss_Index_SouthAmerica))
+  ) %>%
+  ungroup()  
 
-# Calculate Theil's H for each MSOA and Year
-calculate_theils_h <- function(df) {
-  df <- df %>%
-    mutate(Theils_H = ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0))  
-  return(sum(df$Theils_H, na.rm = TRUE))  
-}
-
-theils_h_results <- final_census_dt[Nationality != "Total_Population" & Nationality != "Majority",
-                                    .(H = sum(ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0), na.rm = TRUE)),
-                                    by = .(MSOA11CD, Year)]
-
-# Merge Theil's H results back into the final_census dataframe
-final_final_census <- census_final_updated %>%
-  left_join(theils_h_results, by = c("MSOA11CD", "Year"))
+# View the updated dataset with lagged columns
+print(wide_census %>% select(MSOA11CD, Year, starts_with("lagged_diss")))
 ```
 
-### Isolation index
+### Isolation and Thiels H index
+
 ```{r}
-# Convert final_final_census to data.table
-final_final_census_dt <- as.data.table(final_final_census)
+library(dplyr)
+library(tidyr)
 
-# Calculate Isolation Index 
-calculate_isolation_index <- function(df) {
-  df[, .(Isolation_Index = sum(Proportion^2, na.rm = TRUE))]
-}
-
-# Calculate Isolation Index for each MSOA and Year 
-isolation_results_dt <- final_final_census_dt[
-  Nationality != "Total_Population" & Nationality != "Majority", 
-  calculate_isolation_index(.SD), 
-  by = .(MSOA11CD, Year)
-]
-
-# Merge Isolation Index results back into the original data.table
-finalest_census_dt <- merge(final_final_census_dt, isolation_results_dt, by = c("MSOA11CD", "Year"), all.x = TRUE)
+# Calculate Theil's H and Isolation Index
+wide_census <- wide_census %>%
+  rowwise() %>%
+  mutate(
+    # Total number of groups (including Majority and all nationalities)
+    k = 7,  # Adjust this if you have more or fewer groups
+    
+    # Theil's H calculation for each nationality
+    Theil_H_Bangladesh = -Proportion_Bangladesh * log(Proportion_Bangladesh) / log(k),
+    Theil_H_Caribbean = -Proportion_Caribbean * log(Proportion_Caribbean) / log(k),
+    Theil_H_Poland = -Proportion_Poland * log(Proportion_Poland) / log(k),
+    Theil_H_Romania = -Proportion_Romania * log(Proportion_Romania) / log(k),
+    Theil_H_SEAfrica = -Proportion_SEAfrica * log(Proportion_SEAfrica) / log(k),
+    Theil_H_SouthAmerica = -Proportion_SouthAmerica * log(Proportion_SouthAmerica) / log(k),
+    
+    # Isolation Index calculation for each nationality
+    Isolation_Bangladesh = Proportion_Bangladesh * (Population_Bangladesh / Total_Pop),
+    Isolation_Caribbean = Proportion_Caribbean * (Population_Caribbean / Total_Pop),
+    Isolation_Poland = Proportion_Poland * (Population_Poland / Total_Pop),
+    Isolation_Romania = Proportion_Romania * (Population_Romania / Total_Pop),
+    Isolation_SEAfrica = Proportion_SEAfrica * (Population_SEAfrica / Total_Pop),
+    Isolation_SouthAmerica = Proportion_SouthAmerica * (Population_SouthAmerica / Total_Pop)
+  ) %>%
+  ungroup()
 ```
 
 ```{r}
-# Final cleaning of columns
-finalest_census_dt <- finalest_census_dt[!(Nationality %in% c("Total_Population", "Majority"))]
+wide_census_cleaned <- wide_census %>%
+  select(
+    -starts_with("Population_"),  
+    -starts_with("Majority")     
+  )
+
+wide_census_cleaner <- wide_census_cleaned %>%
+  select(
+    -starts_with("Total_Pop")
+  )
+
+wide_census_cleanerer <- wide_census_cleaner %>%
+  select(
+    -starts_with("k")
+  )
+
+final_long_census <- wide_census_cleanerer %>%
+  pivot_longer(
+    cols = starts_with("Proportion") | starts_with("Diss_Index") | starts_with("lagged_diss") | starts_with("Theil_H") | starts_with("Isolation"),
+    names_to = c("Metric", "Nationality"),
+    names_pattern = "(.*)_(.*)",  # Split at the last underscore
+    values_to = "Value"
+  ) %>%
+  pivot_wider(
+    names_from = "Metric",
+    values_from = "Value"
+  )
+
+# Remove rows where Nationality is "Majority"
+final_long_census <- final_long_census %>%
+  filter(Nationality != "Majority")
 ```
 
 ## Download CSV
 ```{r}
 # Remove the geometry column from the data frame
-census_no_geo <- finalest_census_dt[, !"geometry"]
+census_no_geo <- st_drop_geometry(final_long_census)
 
 # Download as a csv 
 write.csv(census_no_geo, "census_data.csv", row.names = FALSE)

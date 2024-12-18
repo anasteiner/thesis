@@ -11,6 +11,7 @@ library(dplyr)
 library(ggplot2)
 library(sf)
 library(spdep)
+library(readr)
 ```
 
 ## Load census data
@@ -22,12 +23,6 @@ msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal d
 ```
 
 ## Adjust and correct data
-
-```{r}
-# Scale the Dissimilarity Index
-finalest_census_dt <- finalest_census_dt %>%
-  mutate(Dissimilarity_Index = Dissimilarity_Index * 100)
-```
 
 ```{r}
 # View column names and types
@@ -44,15 +39,28 @@ sapply(finalist_census_dt, function(x) sum(is.na(x)))
 # Check if the dataset is an sf object
 class(finalist_census_dt)
 
-# Convert to sf object
-if (!"sf" %in% class(finalist_census_dt)) {
-  finalist_census_dt <- st_as_sf(finalist_census_dt, wkt = "geometry")
-}
+# Join to msoa shapefile
+library(dplyr)
+msoa_census <- msoa_geometry %>%
+    left_join(finalest_census_dt, by = "MSOA11NM", "MSOA11CD")
 
-# Plot a quick map to verify geometry
-plot(st_geometry(finalist_census_dt))
+# Clean final columns
+msoa_census <- msoa_census[, c("MSOA11CD.x", "MSOA11NM", "LAD11NM", "Year", "Nationality", "Proportion", "Dissimilarity_Index", "lagged_diss", "H", "Isolation_Index", "geometry")]
 ```
 
+```{r}
+# Calculate statistics
+min_value <- min(msoa_census$Dissimilarity_Index, na.rm = TRUE)
+max_value <- max(msoa_census$Dissimilarity_Index, na.rm = TRUE)
+median_value <- median(msoa_census$Dissimilarity_Index, na.rm = TRUE)
+mean_value <- mean(msoa_census$Dissimilarity_Index, na.rm = TRUE)
+
+# Print results
+cat("Min:", min_value, "\n")
+cat("Max:", max_value, "\n")
+cat("Median:", median_value, "\n")
+cat("Mean:", mean_value, "\n")
+```
 ## EDA
 
 ### Visualice histograms and boxplots of distributions
