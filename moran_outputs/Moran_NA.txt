@@ -1,0 +1,3 @@
+Moran's I for NA 
+ Moran's I statistic: NaN 
+
