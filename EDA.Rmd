@@ -67,6 +67,7 @@ cat("Max:", max_value, "\n")
 cat("Median:", median_value, "\n")
 cat("Mean:", mean_value, "\n")
 ```
+
 ## EDA
 
 ### Visualice histograms and boxplots of distributions
@@ -176,43 +177,13 @@ ggsave(filename = "line_graphs_comparison/Dissimilarity_Index_All_Nationalities.
        plot = dissimilarity_plot, width = 10, height = 6)
 ```
 
-### Compare heatmaps of diss index between nationalities
-```{r}
-# Directory for spatial heatmaps of diss index
-dir.create("maps", showWarnings = FALSE)
-
-# Years to map and Nationalities
-years_to_map <- c(2001, 2011, 2021)
-nationalities <- unique(msoa_census_final$Nationality)
-
-# Generate heatmaps
-for (nationality in nationalities) {
-  for (year in years_to_map) {
-    map_data <- msoa_census_final %>%
-      filter(Nationality == nationality, Year == year) %>%
-      st_as_sf()
-    
-    map_plot <- ggplot(map_data) +
-      geom_sf(aes(fill = Diss_Index), color = NA) +
-      scale_fill_viridis_c(option = "C") +
-      labs(title = paste("Dissimilarity Index for", nationality, "-", year),
-           fill = "Dissimilarity Index") +
-      theme_minimal()
-    
-    # Save map
-    ggsave(filename = paste0("maps/Dissimilarity_Map_", nationality, "_", year, ".png"),
-           plot = map_plot, width = 10, height = 6)
-  }
-}
-```
-
 ### Calculate spatial autocorrelation of diss index between nationalities
 
 ```{r}
+# Required Libraries
 library(sf)
 library(dplyr)
 library(ggplot2)
-install.packages("FNN")
 library(FNN)
 
 # Extract unique geometries
@@ -226,7 +197,7 @@ coords <- st_coordinates(st_centroid(unique_geometries))
 k <- 10
 knn <- get.knn(coords, k = k)
 
-# Create sparse weights matrix
+# Create a weights matrix (as a sparse matrix)
 weights <- matrix(0, nrow = nrow(coords), ncol = nrow(coords))
 for (i in 1:nrow(knn$nn.index)) {
   weights[i, knn$nn.index[i, ]] <- 1
@@ -234,6 +205,7 @@ for (i in 1:nrow(knn$nn.index)) {
 
 # Loop through each nationality
 nationalities <- unique(msoa_census_final$Nationality)
+
 for (nationality in nationalities) {
   # Filter data for the current nationality
   nat_data <- msoa_census_final %>%
@@ -245,42 +217,45 @@ for (nationality in nationalities) {
   nat_data <- unique_geometries %>%
     left_join(nat_data, by = "MSOA11CD.x")
 
-  # Calculate Moran's I
+  # Ensure spatial data
   x <- nat_data$Diss_Index
   x_mean <- mean(x, na.rm = TRUE)
-  n <- length(x)
-  W <- sum(weights)
-  numerator <- sum(weights * outer(x - x_mean, x - x_mean))
-  denominator <- sum((x - x_mean)^2)
-  observed_moran_I <- (n / W) * (numerator / denominator)
-
-  # Permutation test
-  simulated_moran_I <- numeric(999)
-  for (i in 1:999) {
-    shuffled_x <- sample(x)
-    numerator_perm <- sum(weights * outer(shuffled_x - mean(shuffled_x), shuffled_x - mean(shuffled_x)))
-    simulated_moran_I[i] <- (n / W) * (numerator_perm / denominator)
+  
+  # Calculate Local Moran's I
+  local_moran <- numeric(length(x))
+  for (i in 1:length(x)) {
+    neighbors <- weights[i, ] == 1
+    lagged_value <- sum(x[neighbors], na.rm = TRUE) / sum(neighbors)
+    local_moran[i] <- (x[i] - x_mean) * (lagged_value - x_mean)
   }
-  p_value <- mean(simulated_moran_I >= observed_moran_I)
+  
+  # Normalize Local Moran's I
+  local_moran <- local_moran / var(x, na.rm = TRUE)
 
-  # Save Moran's I results
-  writeLines(paste("Moran's I for", nationality, "\n",
-                   "Moran's I statistic:", round(observed_moran_I, 4), "\n",
-                   "P-value:", round(p_value, 4), "\n"),
-             con = paste0("moran_outputs/Moran_", nationality, ".txt"))
+  # Identify significant clusters
+  nat_data <- nat_data %>%
+    mutate(Local_I = local_moran,
+           Quadrant = case_when(
+             (Diss_Index > x_mean & local_moran > 0) ~ "High-High",
+             (Diss_Index < x_mean & local_moran > 0) ~ "Low-Low",
+             (Diss_Index > x_mean & local_moran < 0) ~ "High-Low",
+             (Diss_Index < x_mean & local_moran < 0) ~ "Low-High",
+             TRUE ~ "Non-significant"
+           ))
 
-  # Moran Scatterplot
-  lagged_values <- (weights %*% x) / rowSums(weights)
-  moran_plot <- ggplot(data = data.frame(Diss_Index = x, Lagged = lagged_values)) +
-    geom_point(aes(x = Diss_Index, y = Lagged), alpha = 0.5, color = "blue") +
-    labs(title = paste("Moran's Scatterplot for", nationality),
-         x = "Dissimilarity Index",
-         y = "Spatially Lagged Dissimilarity Index") +
+  # LISA Map
+  lisa_map <- ggplot(data = nat_data) +
+    geom_sf(aes(fill = Quadrant), color = NA) +
+    scale_fill_manual(values = c("High-High" = "red", "Low-Low" = "blue", 
+                                 "High-Low" = "orange", "Low-High" = "green", 
+                                 "Non-significant" = "grey")) +
+    labs(title = paste("LISA Map for", nationality),
+         fill = "Quadrant") +
     theme_minimal()
 
-  # Save Moran scatterplot
-  ggsave(filename = paste0("moran_outputs/Moran_Scatter_", nationality, ".png"),
-         plot = moran_plot, width = 8, height = 6)
+  # Save LISA Map
+  ggsave(filename = paste0("moran_outputs/LISA_Map_", nationality, ".png"),
+         plot = lisa_map, width = 10, height = 8)
 }
 ```
 
@@ -339,6 +314,10 @@ for (nationality in nationalities) {
 }
 ```
 
+```{r}
+The spatial patterns of the dissimilarity index across London reveal significant similarities among the six nationalities, with all groups generally exhibiting lower segregation levels (purple hues) in central and western areas and higher segregation (yellow/orange) concentrated in the eastern and southeastern outskirts. This indicates a shared trend of more integrated settlement in central zones, likely driven by accessibility and economic opportunities. However, subtle differences emerge: Southeast Africa stands out with consistently lower segregation levels citywide, reflecting a notably even spatial distribution. In contrast, Bangladesh and South America display more pronounced pockets of higher segregation, particularly in eastern and southeastern MSOAs. The Caribbean, Polish, and Romanian populations exhibit similar trends of moderate integration, with isolated areas of slightly higher dissimilarity on the city's fringes. While the overall patterns point to improving integration, these nuanced differences highlight variations in the settlement experiences of each group across London.
+```
+
 ### Borough-Level Statistics for Dissimilarity Index
 
 ```{r}
@@ -359,34 +338,62 @@ print(borough_stats)
 ```{r}
 # Calculate change in Diss_Index over time
 change_stats <- msoa_census_final %>%
+  filter(!is.na(Diss_Index), !is.na(Nationality)) %>%  # Remove rows with NA Diss_Index or Nationality
   group_by(MSOA11CD.x, LAD11NM, Nationality) %>%
   summarize(
-    Diss_Index_Change = max(Diss_Index, na.rm = TRUE) - min(Diss_Index, na.rm = TRUE),
+    Diss_Index_Change = max(Diss_Index) - min(Diss_Index),  # No need for na.rm as NA rows are excluded
     .groups = "drop"
   )
 
-# Top MSOAs with most changes in Dissimilarity Index
-top_msoas <- change_stats %>%
+# Top MSOAs where segregation DECREASED
+top_msoas_decreased <- change_stats %>%
+  filter(Diss_Index_Change < 0) %>%
+  arrange(Diss_Index_Change) %>%
+  group_by(Nationality) %>%
+  slice_head(n = 5)
+
+# View top MSOAs with decreased segregation
+print(top_msoas_decreased)
+
+# Top MSOAs where segregation INCREASED
+top_msoas_increased <- change_stats %>%
+  filter(Diss_Index_Change > 0) %>%
   arrange(desc(Diss_Index_Change)) %>%
   group_by(Nationality) %>%
-  slice_head(n = 10)  
+  slice_head(n = 5)
 
-# View top MSOAs
-print(top_msoas)
+# View top MSOAs with increased segregation
+print(top_msoas_increased)
 
-# Top Boroughs with most changes in Dissimilarity Index
-top_boroughs <- change_stats %>%
+# Top Boroughs where segregation DECREASED
+top_boroughs_decreased <- change_stats %>%
+  filter(Diss_Index_Change < 0) %>%
   group_by(LAD11NM, Nationality) %>%
   summarize(
-    Total_Change = sum(Diss_Index_Change, na.rm = TRUE),
+    Total_Change = sum(Diss_Index_Change),
+    .groups = "drop"
+  ) %>%
+  arrange(Total_Change) %>%
+  group_by(Nationality) %>%
+  slice_head(n = 5)
+
+# View top boroughs with decreased segregation
+print(top_boroughs_decreased)
+
+# Top Boroughs where segregation INCREASED
+top_boroughs_increased <- change_stats %>%
+  filter(Diss_Index_Change > 0) %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarize(
+    Total_Change = sum(Diss_Index_Change),
     .groups = "drop"
   ) %>%
   arrange(desc(Total_Change)) %>%
   group_by(Nationality) %>%
-  slice_head(n = 10)  
+  slice_head(n = 5)
 
-# View top boroughs
-print(top_boroughs)
+# View top boroughs with increased segregation
+print(top_boroughs_increased)
 ```
 
 
