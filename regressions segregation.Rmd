@@ -76,10 +76,6 @@ final_segregation <- segregation_sf %>%
     Proportion,
     Diss_Index,
     lagged_diss,
-    lagged_Rent,
-    lagged_Owned,
-    lagged_Houseprice,
-    lagged_Occupation
   ) 
 
 filtered_segregation <- final_segregation %>%
@@ -176,9 +172,8 @@ Variables such as Owned, Houseprice, Overoccupation, and Socialhousing can provi
 # Load required libraries
 library(dplyr)
 
-# Replace 'filtered_segregation' with your actual dataset
 predictors <- filtered_segregation %>%
-  st_drop_geometry() %>%  # Drop geometry if it's an sf object
+  st_drop_geometry() %>%  
   select(Proportion, Rent, Socialhousing, Owned, Houseprice,
       Overoccupation, Crime, Greenery, PTAL,
       lagged_diss) %>% 
@@ -309,27 +304,29 @@ Incorporate the lagged settlement variable alongside all housing variables to ca
 ```{r}
 # Load required libraries
 library(tidyverse)
-library(stargazer)
-library(sjPlot)
 
-# Define variables
-housing_variables <- c("Rent", "Socialhousing", "Owned", "Houseprice", "Overoccupation", "lagged_diss")
-neighborhood_variables <- c("Crime", "Greenery", "PTAL")
-nationalities <- unique(filtered_segregation$Nationality)
-
-# Min-Max Scaling function
-min_max_scaling <- function(x) {
-  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
-}
-
-# Apply Min-Max Scaling and then divide by a factor
-division_factor <- 1000  # Adjust the factor as needed
+# Scaling all variables
 scaled_segregation <- filtered_segregation %>%
-  mutate(across(
-    all_of(c(housing_variables, neighborhood_variables)),
-    ~ min_max_scaling(.) / division_factor,
-    .names = "scaled_{col}"
-  ))
+  mutate(
+    # Housing variables
+    scaled_Rent = Rent / 1000,                  # Scale Rent (thousands to smaller range)
+    scaled_Socialhousing = Socialhousing / 100,              # Scale Budget (billions to smaller range)
+    scaled_Houseprice = Houseprice / 100000,   # Scale Houseprice (hundreds of thousands to smaller range)
+    scaled_Overoccupation = Overoccupation / 1000,     # Scale Occupation (hundreds to smaller range)
+    scaled_Owned = Owned,                      # Keep Owned unchanged (already 0-1)
+    # Neighborhood variables
+    scaled_Crime = Crime / 10,                 # Scale Crime (reduce magnitude for alignment)
+    scaled_Greenery = Greenery,                # Keep Greenery unchanged (already 0-1)
+    scaled_PTAL = PTAL                         # Keep PTAL unchanged (manageable range)
+  )
+```
+
+```{r}
+# Define variables
+housing_variables <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_Overoccupation", "scaled_Owned")
+neighborhood_variables <- c("scaled_Crime", "scaled_Greenery", "scaled_PTAL")
+all_variables <- c(housing_variables, "lagged_diss", neighborhood_variables)
+nationalities <- unique(scaled_segregation$Nationality)
 
 # Create directory for regression outputs
 dir.create("regression_outputs", showWarnings = FALSE)
@@ -338,8 +335,13 @@ dir.create("regression_outputs", showWarnings = FALSE)
 for (nationality in nationalities) {
   # Filter data for the current nationality
   nationality_data <- scaled_segregation %>%
-    filter(Nationality == nationality) %>%
-    drop_na(Diss_Index, starts_with("scaled_"))  # Ensure complete cases
+    filter(Nationality == nationality)
+  
+  # Check if there are enough rows to proceed
+  if (nrow(nationality_data) == 0) {
+    warning(paste("No valid data for nationality:", nationality))
+    next  # Skip this iteration if no rows are available
+  }
   
   # Define dependent variable
   y_variable <- "Diss_Index"
@@ -347,62 +349,82 @@ for (nationality in nationalities) {
   # Initialize list to store models
   models <- list()
   
-  # 1. Regressions for progressively adding housing variables
-  current_formula <- y_variable
+  # 1. Progressive models for housing characteristics
   for (i in seq_along(housing_variables)) {
-    scaled_vars <- paste0("scaled_", housing_variables[1:i])
-    current_formula <- paste(y_variable, "~", paste(scaled_vars, collapse = " + "))
-    model <- lm(as.formula(current_formula), data = nationality_data)
-    models[[paste0("Housing_Progressive_", paste(scaled_vars, collapse = "_"))]] <- model
+    current_vars <- housing_variables[1:i]
+    current_formula <- paste(y_variable, "~", paste(current_vars, collapse = " + "))
+    model <- lm(as.formula(current_formula), data = nationality_data, na.action = na.exclude)
+    models[[paste0("Housing_Progressive_", paste(current_vars, collapse = "_"))]] <- model
   }
   
-  # 2. Full model with all variables
-  full_formula <- paste(
-    y_variable, "~",
-    paste(paste0("scaled_", housing_variables), collapse = " + "), "+",
-    paste(paste0("scaled_", neighborhood_variables), collapse = " + ")
-  )
-  full_model <- lm(as.formula(full_formula), data = nationality_data)
+  # 2. Model with all housing variables + lagged_diss
+  housing_lagged_formula <- paste(y_variable, "~", paste(housing_variables, collapse = " + "), "+ lagged_diss")
+  housing_lagged_model <- lm(as.formula(housing_lagged_formula), data = nationality_data, na.action = na.exclude)
+  models[["Housing_Lagged"]] <- housing_lagged_model
+  
+  # 3. Full model with all variables
+  full_formula <- paste(y_variable, "~", paste(all_variables, collapse = " + "))
+  full_model <- lm(as.formula(full_formula), data = nationality_data, na.action = na.exclude)
   models[["FullModel"]] <- full_model
   
-  # Save diagnostics plots for the full model
-  pdf(file = paste0("regression_outputs/Diagnostics_", nationality, "_FullModel.pdf"))
+  # Save diagnostics plots for all models
+  pdf(file = paste0("regression_outputs/Diagnostics_", nationality, ".pdf"))
   par(mfrow = c(2, 2))
-  plot(full_model)  # Residuals, QQ, leverage
+  for (model_name in names(models)) {
+    plot(models[[model_name]])  # Residuals, QQ, leverage
+    title(main = paste("Diagnostics for", model_name))
+  }
   dev.off()
   
-  # 3. Generate traditional linear regression table
-  results_table <- summary(full_model)$coefficients %>%
-    as.data.frame() %>%
-    rownames_to_column(var = "Predictor") %>%
-    mutate(
-      R_squared = summary(full_model)$r.squared,
-      Adj_R_squared = summary(full_model)$adj.r.squared
-    )
-  write.csv(results_table, paste0("regression_outputs/RegressionResults_", nationality, ".csv"), row.names = FALSE)
+  # Scale coefficients for table display
+  scaled_models <- lapply(models, function(model) {
+    # Create a copy of the model and scale the coefficients
+    scaled_model <- model
+    coefs <- coef(scaled_model) * 100  # Scale coefficients by 100
+    attr(scaled_model, "coefficients") <- coefs
+    scaled_model
+  })
   
-  # 4. Generate regression tables in styled formats
+  # Generate regression tables with Stargazer
   try({
+    print(paste("Generating stargazer table for:", nationality))
     stargazer(
-      models,
+      scaled_models,
       type = "html",
-      out = paste0("regression_outputs/RegressionSummary_", nationality, ".html"),
-      title = paste("Regression Results for", nationality),
+      out = paste0("regression_outputs/RegressionTable_", nationality, "_Cleaned.html"),
+      title = paste("Regression Results for", nationality, "(Coefficients x 100)"),
       digits = 3,
-      star.cutoffs = c(0.05, 0.01, 0.001)
+      star.cutoffs = c(0.05, 0.01, 0.001),
+      dep.var.labels = "Dissimilarity Index",
+      
+      # Remove formula row
+      column.labels = rep("", length(models)),  # Empty column labels to suppress formula row
+      column.separate = NULL                   # Ensure no separation based on formulas
     )
-  }, silent = TRUE)
+  }, silent = FALSE)
   
+  # Generate regression tables with tab_model
   try({
+    print(paste("Generating tab_model table for:", nationality))
     tab_model(
-      models,
-      file = paste0("regression_outputs/RegressionSummary_", nationality, "_Styled.html"),
-      show.ci = TRUE, show.std = TRUE,
-      dv.labels = paste("Dissimilarity Index -", nationality)
+      scaled_models[[1]], scaled_models[[2]], scaled_models[[3]], scaled_models[["Housing_Lagged"]], scaled_models[["FullModel"]],
+      file = paste0("regression_outputs/RegressionTable_", nationality, "_Styled.html"),
+      show.ci = TRUE,
+      show.std = TRUE,
+      dv.labels = paste("Dissimilarity Index -", nationality),
+      
+      # Apply scaling to coefficients in tab_model
+      transform = function(x) x * 100
     )
-  }, silent = TRUE)
+  }, silent = FALSE)
 }
 ```
+```{r}
+summary(model)
+summary(housing_lagged_model)
+summary(full_model)
+```
+
 
 ### Temporal analysis of Linear regressions for policy analysis
 

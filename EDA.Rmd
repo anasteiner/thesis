@@ -184,24 +184,17 @@ ggsave(filename = "line_graphs_comparison/Dissimilarity_Index_All_Nationalities.
 library(sf)
 library(dplyr)
 library(ggplot2)
+library(Matrix)
 library(FNN)
 
-# Extract unique geometries
+# Create unique geometries with MSOA codes
 unique_geometries <- msoa_census_final %>%
-  select(MSOA11CD.x, geometry) %>%
-  distinct() %>%
+  group_by(MSOA11CD.x) %>%
+  summarize(geometry = first(geometry)) %>%
   st_as_sf()
 
-# Compute k-nearest neighbors
-coords <- st_coordinates(st_centroid(unique_geometries))
-k <- 10
-knn <- get.knn(coords, k = k)
-
-# Create a weights matrix (as a sparse matrix)
-weights <- matrix(0, nrow = nrow(coords), ncol = nrow(coords))
-for (i in 1:nrow(knn$nn.index)) {
-  weights[i, knn$nn.index[i, ]] <- 1
-}
+# Ensure consistent CRS for geometries
+unique_geometries <- st_transform(unique_geometries, crs = 27700)  # Example: British National Grid
 
 # Loop through each nationality
 nationalities <- unique(msoa_census_final$Nationality)
@@ -211,39 +204,58 @@ for (nationality in nationalities) {
   nat_data <- msoa_census_final %>%
     filter(Nationality == nationality) %>%
     select(MSOA11CD.x, Diss_Index) %>%
-    distinct()  # Ensure unique rows per MSOA
+    distinct()
 
-  # Map Dissimilarity Index to unique geometries
-  nat_data <- unique_geometries %>%
-    left_join(nat_data, by = "MSOA11CD.x")
+  # Use st_join for spatial join (ensuring proper handling of sf objects)
+  nat_data <- st_join(unique_geometries, nat_data, left = TRUE)
 
-  # Ensure spatial data
+  # Ensure nat_data is still an sf object
+  nat_data <- st_as_sf(nat_data)
+
+  # Prepare dissimilarity index values and handle missing data
   x <- nat_data$Diss_Index
+  x[is.na(x)] <- mean(x, na.rm = TRUE)  # Replace NA with mean value
   x_mean <- mean(x, na.rm = TRUE)
-  
-  # Calculate Local Moran's I
+
+  # Recompute centroids and weights matrix for this subset
+  coords <- st_coordinates(st_centroid(st_geometry(nat_data)))
+  knn <- get.knn(coords, k = 10)
+
+  # Create a sparse weights matrix for this subset
+  weights <- sparseMatrix(
+    i = rep(1:nrow(knn$nn.index), each = 10),
+    j = as.vector(knn$nn.index),
+    x = 1,
+    dims = c(nrow(coords), nrow(coords))
+  )
+
+  # Row-standardize the weights matrix
+  row_sums <- rowSums(weights)
+  row_standardized_weights <- weights / row_sums
+
+  # Compute Local Moran's I manually
   local_moran <- numeric(length(x))
-  for (i in 1:length(x)) {
-    neighbors <- weights[i, ] == 1
-    lagged_value <- sum(x[neighbors], na.rm = TRUE) / sum(neighbors)
+  for (i in seq_along(x)) {
+    neighbors <- which(row_standardized_weights[i, ] > 0)
+    lagged_value <- sum(row_standardized_weights[i, neighbors] * x[neighbors], na.rm = TRUE)
     local_moran[i] <- (x[i] - x_mean) * (lagged_value - x_mean)
   }
-  
+
   # Normalize Local Moran's I
   local_moran <- local_moran / var(x, na.rm = TRUE)
 
-  # Identify significant clusters
+  # Add Moran's I results to nat_data
   nat_data <- nat_data %>%
     mutate(Local_I = local_moran,
            Quadrant = case_when(
-             (Diss_Index > x_mean & local_moran > 0) ~ "High-High",
-             (Diss_Index < x_mean & local_moran > 0) ~ "Low-Low",
-             (Diss_Index > x_mean & local_moran < 0) ~ "High-Low",
-             (Diss_Index < x_mean & local_moran < 0) ~ "Low-High",
+             (Diss_Index > x_mean & Local_I > 0) ~ "High-High",
+             (Diss_Index < x_mean & Local_I > 0) ~ "Low-Low",
+             (Diss_Index > x_mean & Local_I < 0) ~ "High-Low",
+             (Diss_Index < x_mean & Local_I < 0) ~ "Low-High",
              TRUE ~ "Non-significant"
            ))
 
-  # LISA Map
+  # Create LISA Map
   lisa_map <- ggplot(data = nat_data) +
     geom_sf(aes(fill = Quadrant), color = NA) +
     scale_fill_manual(values = c("High-High" = "red", "Low-Low" = "blue", 
@@ -254,8 +266,12 @@ for (nationality in nationalities) {
     theme_minimal()
 
   # Save LISA Map
+  if (!dir.exists("moran_outputs")) dir.create("moran_outputs")
   ggsave(filename = paste0("moran_outputs/LISA_Map_", nationality, ".png"),
          plot = lisa_map, width = 10, height = 8)
+
+  # Print progress
+  print(paste("Completed Moran's I and LISA Map for:", nationality))
 }
 ```
 
@@ -267,6 +283,23 @@ for (nationality in nationalities) {
 P-Value	Interpretation
 < 0.05	Significant spatial autocorrelation
 > 0.05	No significant spatial autocorrelation
+```
+
+```{r}
+Mixed Red/Orange Areas
+
+Likely represent historically segregated regions.
+These regions may be where immigrant communities settled initially, creating dense cultural and ethnic clusters.
+These areas may require policies aimed at fostering integration, such as:
+Affordable mixed-income housing.
+Educational investments to promote mobility.
+Mixed Blue/Green Areas
+
+Likely represent integrated suburban or redevelopment zones.
+These areas might reflect a balance of diverse groups, driven by:
+Suburban housing policies.
+Urban regeneration and investment in infrastructure.
+These regions might provide insights into successful policies for replication in other areas.
 ```
 
 ### Visualice maps of diss index between nationalities and through time
@@ -312,10 +345,6 @@ for (nationality in nationalities) {
     height = 8
   )
 }
-```
-
-```{r}
-The spatial patterns of the dissimilarity index across London reveal significant similarities among the six nationalities, with all groups generally exhibiting lower segregation levels (purple hues) in central and western areas and higher segregation (yellow/orange) concentrated in the eastern and southeastern outskirts. This indicates a shared trend of more integrated settlement in central zones, likely driven by accessibility and economic opportunities. However, subtle differences emerge: Southeast Africa stands out with consistently lower segregation levels citywide, reflecting a notably even spatial distribution. In contrast, Bangladesh and South America display more pronounced pockets of higher segregation, particularly in eastern and southeastern MSOAs. The Caribbean, Polish, and Romanian populations exhibit similar trends of moderate integration, with isolated areas of slightly higher dissimilarity on the city's fringes. While the overall patterns point to improving integration, these nuanced differences highlight variations in the settlement experiences of each group across London.
 ```
 
 ### Borough-Level Statistics for Dissimilarity Index
