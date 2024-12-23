@@ -533,36 +533,25 @@ finals_rents <- full_join(msoa, rents_final, by = c("LAD11CD", "LAD11NM"))
 finals_rents <- finals_rents  %>%
   dplyr::select(MSOA11CD, MSOA11NM, geometry, Proportion, "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019")
 
-rents_long <- finals_rents %>%
-  pivot_longer(
-    cols = starts_with("201"),  
-    names_to = "Year",          
-    values_to = "Rent"          
-  ) %>%
-  dplyr::select(MSOA11CD, MSOA11NM, geometry, Proportion, Year, Rent)
+# Convert to long format
+rents_long <- finals_rents%>%
+  pivot_longer(cols = starts_with("20"), 
+               names_to = "Year", 
+               values_to = "Rent")
 
+# Select required columns
 rents_long <- rents_long %>%
-  mutate(
-    Rent = ifelse(
-      MSOA11CD == "London",
-      Rent,                            
-      Rent * Proportion                 
-    )
-  )
+  select(MSOA11CD, MSOA11NM, geometry, Year, Rent)
 
-rents_long <- rents_long %>%
-  dplyr::select(-Proportion)
+# Ensure all_years contains only odd years and is of integer type
+all_years <- seq(2001, 2021, by = 2)  # Generate odd years
+all_years <- as.integer(all_years)
 
-rents_long <- rents_long %>%
-  mutate(Year = as.integer(Year)) 
-
-# Define all the years you want to interpolate
-all_years <- 2001:2021
-
-# Perform interpolation for the Rent column
+# Convert `Year` to integer before `complete()`
 interpolated_rents <- rents_long %>%
+  mutate(Year = as.integer(Year)) %>%  # Ensure Year column is integer
   group_by(MSOA11CD, MSOA11NM) %>%
-  complete(Year = all_years) %>%  
+  complete(Year = all_years) %>%  # Fill missing odd Years
   arrange(Year) %>%
   mutate(
     Rent = if (sum(!is.na(Rent)) > 1) {
@@ -612,6 +601,13 @@ combined_houseprice <- standardized_datasets[[4]]
 accommodation_with_london <- standardized_datasets[[5]]
 
 # Full join all datasets
+# Convert Year to integer for all datasets
+interpolated_rents <- interpolated_rents %>% mutate(Year = as.integer(Year))
+final_budget <- final_budget %>% mutate(Year = as.integer(Year))
+average_tenure <- average_tenure %>% mutate(year = as.integer(year))
+combined_houseprice <- combined_houseprice %>% mutate(Year = as.integer(Year))
+accommodation_with_london <- accommodation_with_london %>% mutate(Year = as.integer(Year))
+
 joined_data <- interpolated_rents %>%
   st_drop_geometry() %>%
   left_join(st_drop_geometry(final_budget), by = c("MSOA11CD", "Year")) %>%
@@ -660,16 +656,6 @@ cleaned_housing <- cleaned_housing %>%
                             manual_values$Social[match(Year, manual_values$Year)], 
                             Social)
   )
-```
-
-```{r}
-# Specify columns for which you want to create lagged-1 versions
-columns_to_lag <- c("Rent", "budget_proportion", "Houseprice", "Occupation", "Owned")
-
-# Create lagged-1 columns
-cleaned_housing <- cleaned_housing %>%
-  arrange(MSOA11CD, Year) %>% # Ensure data is sorted
-  mutate(across(all_of(columns_to_lag), ~ lag(.x, 1), .names = "lagged_{.col}"))
 ```
 
 ## Download Housing CSV
