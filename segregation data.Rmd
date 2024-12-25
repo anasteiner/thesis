@@ -404,7 +404,7 @@ for (year in years) {
 
       # Calculate the Dissimilarity Index for each MSOA using count data and scale by 1000
       merged_data <- merged_data %>%
-        mutate(Dissimilarity = 0.5 * abs((Population_majority / total_majority) - (Population_nat / total_nat)) * 1000)
+        mutate(Dissimilarity = 0.5 * abs((Population_majority / total_majority) - (Population_nat / total_nat)) * 100)
 
       # Store the results
       dissimilarity_results <- rbind(
@@ -515,6 +515,405 @@ census_no_geo <- st_drop_geometry(finalest_census_dt)
 
 # Download as a csv 
 write.csv(census_no_geo, "census_data.csv", row.names = FALSE)
+```
+
+```{r}
+# Remove rows with any NA values
+census_data_clean <- na.omit(finalest_census_dt)
+```
+
+```{r}
+# Filter MSOAs with Dissimilarity_Index > 1 for each nationality
+high_dissimilarity_msoas <- finalest_census_dt %>%
+  filter(Dissimilarity_Index > 1) %>% # Filter rows where the index is above 1
+  group_by(Nationality) %>% # Group by nationality
+  summarise(
+    MSOA_Count = n(), # Count the number of MSOAs
+    MSOAs = paste(unique(MSOA11CD), collapse = ", ") # List unique MSOA codes
+  ) %>%
+  arrange(desc(MSOA_Count)) # Arrange by number of MSOAs in descending order
+
+# View the result
+print(high_dissimilarity_msoas)
+```
+
+```{r}
+# Calculate statistics
+min_value <- min(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
+max_value <- max(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
+median_value <- median(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
+mean_value <- mean(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
+
+# Print results
+cat("Min:", min_value, "\n")
+cat("Max:", max_value, "\n")
+cat("Median:", median_value, "\n")
+cat("Mean:", mean_value, "\n")
+```
+### Visualice histograms and boxplots of distributions
+
+```{r}
+# Directory for histogram and boxplot outputs
+dir.create("distribution_plots", showWarnings = FALSE)
+
+# Histograms for all indices
+for (var in c("Proportion", "Dissimilarity_Index", "Isolation_Index", "H")) {
+  hist_plot <- ggplot(finalest_census_dt, aes_string(x = var)) +
+    geom_histogram(bins = 30, fill = "blue", color = "black", alpha = 0.7) +
+    facet_wrap(~ Nationality, scales = "free") +
+    labs(title = paste("Histogram of", var, "by Nationality"),
+         x = var, y = "Count") +
+    theme_minimal()
+  
+  # Save histogram
+  ggsave(filename = paste0("distribution_plots/Histogram_", var, ".png"),
+         plot = hist_plot, width = 10, height = 6)
+}
+
+# Boxplots for all indices
+for (var in c("Proportion", "Dissimilarity_Index", "Isolation_Index", "H")) {
+  box_plot <- ggplot(finalest_census_dt, aes(x = Nationality, y = !!sym(var))) +
+    geom_boxplot(fill = "lightblue", color = "black", alpha = 0.7) +
+    labs(title = paste("Boxplot of", var, "by Nationality"),
+         x = "Nationality", y = var) +
+    theme_minimal()
+  
+  # Save boxplot
+  ggsave(filename = paste0("distribution_plots/Boxplot_", var, ".png"),
+         plot = box_plot, width = 10, height = 6)
+}
+```
+
+### Visualice temporal line graphs of all indices
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Ensure Year is numeric
+finalest_census_dt$Year <- as.numeric(finalest_census_dt$Year)
+
+# Aggregate data by Year and Nationality
+aggregated_data <- finalest_census_dt %>%
+  group_by(Year, Nationality) %>%
+  summarize(
+    Proportion = mean(Proportion, na.rm = TRUE),
+    Dissimilarity_Index = mean(Dissimilarity_Index, na.rm = TRUE),
+    Lagged_Dissimilarity = mean(Lagged_Dissimilarity, na.rm = TRUE),
+    H = mean(H, na.rm = TRUE),
+    Isolation_Index = mean(Isolation_Index, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Create directory for nationality-wise plots
+dir.create("line_graphs_nationality", showWarnings = FALSE)
+
+# Loop through each nationality and create line plots
+nationalities <- unique(aggregated_data$Nationality)
+
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- aggregated_data %>%
+    filter(Nationality == nationality)
+
+  # Generate the line plot
+  plot <- ggplot(nat_data) +
+    geom_line(aes(x = Year, y = Proportion, color = "Proportion"), size = 1.2) +
+    geom_line(aes(x = Year, y = Dissimilarity_Index, color = "Dissimilarity Index"), size = 1.2) +
+    geom_line(aes(x = Year, y = H, color = "Theil's H"), size = 1.2) +
+    geom_line(aes(x = Year, y = Isolation_Index, color = "Isolation Index"), size = 1.2) +
+    labs(
+      title = paste("Temporal Trends for", nationality),
+      x = "Year", y = "Value", color = "Index"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "top"
+    )
+
+  # Save the plot
+  ggsave(
+    filename = paste0("line_graphs_nationality/Trends_", nationality, ".png"),
+    plot = plot,
+    width = 10,
+    height = 6
+  )
+}
+```
+
+### Visualice and compare temporal line graph between all nationalities
+```{r}
+# Create line graph for Dissimilarity Index comparing all nationalities
+dissimilarity_plot <- ggplot(aggregated_data, aes(x = Year, y = Dissimilarity_Index, color = Nationality, group = Nationality)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_y_continuous(
+    labels = function(x) x * 10, # Scale the y-axis labels by 10
+    breaks = seq(0.01, 0.07, by = 0.01) # Adjust breaks based on data range
+  ) +
+  labs(
+    title = "Dissimilarity Index Over Time (All Nationalities)",
+    x = "Year",
+    y = "Scaled Dissimilarity Index (0.1 - 0.7)", # Update label for clarity
+    color = "Nationality"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# Save the plot
+dir.create("line_graphs_comparison", showWarnings = FALSE)
+ggsave(filename = "line_graphs_comparison/Dissimilarity_Index_All_Nationalities.png",
+       plot = dissimilarity_plot, width = 10, height = 6)
+```
+
+### Calculate spatial autocorrelation of diss index between nationalities
+
+```{r}
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(Matrix)
+library(FNN)
+
+# Ensure consistent CRS for geometries
+finalest_census_dt <- finalest_census_dt %>%
+  st_as_sf() %>% # Ensure it is an sf object
+  st_transform(crs = 27700) # Example: British National Grid
+
+# Create unique geometries with MSOA codes
+unique_geometries <- finalest_census_dt %>%
+  group_by(MSOA11CD) %>%
+  slice(1) %>% # Retain the first row for each MSOA11CD
+  ungroup() %>% # Remove grouping to avoid issues in downstream operations
+  dplyr::select(MSOA11CD, geometry) %>% # Keep only MSOA11CD and geometry columns
+  st_as_sf() # Ensure the result is an sf object
+
+# Ensure CRS is consistent for unique_geometries
+unique_geometries <- st_transform(unique_geometries, crs = 27700)
+
+# Get unique nationalities
+nationalities <- unique(finalest_census_dt$Nationality)
+
+# Loop through each nationality
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>%
+    filter(Nationality == nationality) %>%
+    dplyr::select(MSOA11CD, Year, Dissimilarity_Index, geometry) %>%
+    distinct()
+
+  # Use st_join for spatial join (ensuring proper handling of sf objects)
+  nat_data <- st_join(unique_geometries, nat_data, left = TRUE)
+
+  # Ensure nat_data is still an sf object
+  nat_data <- st_as_sf(nat_data)
+
+  # Prepare dissimilarity index values and handle missing data
+  x <- nat_data$Dissimilarity_Index
+  x[is.na(x)] <- mean(x, na.rm = TRUE)  # Replace NA with mean value
+  x_mean <- mean(x, na.rm = TRUE)
+
+  # Recompute centroids and weights matrix for this subset
+  coords <- st_coordinates(st_centroid(st_geometry(nat_data)))
+  knn <- get.knn(coords, k = 10)
+
+  # Create a sparse weights matrix for this subset
+  weights <- sparseMatrix(
+    i = rep(1:nrow(knn$nn.index), each = 10),
+    j = as.vector(knn$nn.index),
+    x = 1,
+    dims = c(nrow(coords), nrow(coords))
+  )
+
+  # Row-standardize the weights matrix
+  row_sums <- rowSums(weights)
+  row_standardized_weights <- weights / row_sums
+
+  # Compute Local Moran's I manually
+  local_moran <- numeric(length(x))
+  for (i in seq_along(x)) {
+    neighbors <- which(row_standardized_weights[i, ] > 0)
+    lagged_value <- sum(row_standardized_weights[i, neighbors] * x[neighbors], na.rm = TRUE)
+    local_moran[i] <- (x[i] - x_mean) * (lagged_value - x_mean)
+  }
+
+  # Normalize Local Moran's I
+  local_moran <- local_moran / var(x, na.rm = TRUE)
+
+  # Add Moran's I results to nat_data
+  nat_data <- nat_data %>%
+    mutate(Local_I = local_moran,
+           Quadrant = case_when(
+             (Dissimilarity_Index > x_mean & Local_I > 0) ~ "High-High",
+             (Dissimilarity_Index < x_mean & Local_I > 0) ~ "Low-Low",
+             (Dissimilarity_Index > x_mean & Local_I < 0) ~ "High-Low",
+             (Dissimilarity_Index < x_mean & Local_I < 0) ~ "Low-High",
+             TRUE ~ "Non-significant"
+           ))
+
+  # Create LISA Map
+  lisa_map <- ggplot(data = nat_data) +
+    geom_sf(aes(fill = Quadrant), color = NA) +
+    scale_fill_manual(values = c("High-High" = "red", "Low-Low" = "blue",
+                                 "High-Low" = "orange", "Low-High" = "green",
+                                 "Non-significant" = "grey")) +
+    labs(title = paste("LISA Map for", nationality),
+         fill = "Quadrant") +
+    theme_minimal()
+
+  # Save LISA Map
+  if (!dir.exists("moran_outputs")) dir.create("moran_outputs")
+  ggsave(filename = paste0("moran_outputs/LISA_Map_", nationality, ".png"),
+         plot = lisa_map, width = 10, height = 8)
+
+  # Print progress
+  print(paste("Completed Moran's I and LISA Map for:", nationality))
+}
+```
+
+```{r}
+# Moran's I	Meaning
+> 0	Positive spatial autocorrelation (clustering)
+< 0	Negative spatial autocorrelation (dispersion)
+≈ 0	No spatial autocorrelation (random)
+P-Value	Interpretation
+< 0.05	Significant spatial autocorrelation
+> 0.05	No significant spatial autocorrelation
+```
+
+```{r}
+Mixed Red/Orange Areas
+
+Likely represent historically segregated regions.
+These regions may be where immigrant communities settled initially, creating dense cultural and ethnic clusters.
+These areas may require policies aimed at fostering integration, such as:
+Affordable mixed-income housing.
+Educational investments to promote mobility.
+Mixed Blue/Green Areas
+
+Likely represent integrated suburban or redevelopment zones.
+These areas might reflect a balance of diverse groups, driven by:
+Suburban housing policies.
+Urban regeneration and investment in infrastructure.
+These regions might provide insights into successful policies for replication in other areas.
+```
+
+### Visualice maps of diss index between nationalities and through time
+```{r}
+library(ggplot2)
+library(sf)
+
+# Create directory for spatial maps
+dir.create("spatial_maps", showWarnings = FALSE)
+
+# Loop through each nationality to create maps
+nationalities <- unique(finalest_census_dt$Nationality)
+
+for (nationality in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>%
+    filter(Nationality == nationality)
+  
+  # Plot map for the current nationality
+  diss_map <- ggplot(nat_data) +
+    geom_sf(aes(fill = Dissimilarity_Index, geometry = geometry), color = NA) +
+    scale_fill_viridis_c(option = "C", name = "Dissimilarity Index") +
+    labs(
+      title = paste("Dissimilarity Index Across London -", nationality),
+      caption = "Source: Census Data"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
+    )
+  
+  # Save the plot
+  ggsave(
+    filename = paste0("spatial_maps/Dissimilarity_Index_", nationality, ".png"),
+    plot = diss_map,
+    width = 12,
+    height = 8
+  )
+}
+```
+
+### Borough-Level Statistics for Dissimilarity Index
+
+```{r}
+borough_stats <- finalest_census_dt %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarize(
+    mean_Dissimilarity_Index = mean(Dissimilarity_Index, na.rm = TRUE),
+    min_Dissimilarity_Index = min(Dissimilarity_Index, na.rm = TRUE),
+    max_Dissimilarity_Index = max(Dissimilarity_Index, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(borough_stats)
+```
+
+### Identify MSOAs and Boroughs with Most Changes in Dissimilarity Index
+
+```{r}
+# Calculate change in Diss_Index over time
+change_stats <- finalest_census_dt %>%
+  filter(!is.na(Dissimilarity_Index), !is.na(Nationality)) %>%  # Remove rows with NA Diss_Index or Nationality
+  group_by(MSOA11CD, LAD11NM, Nationality) %>%
+  summarize(
+    Diss_Index_Change = max(Dissimilarity_Index) - min(Dissimilarity_Index),  # No need for na.rm as NA rows are excluded
+    .groups = "drop"
+  )
+
+# Top MSOAs where segregation DECREASED
+top_msoas_decreased <- change_stats %>%
+  filter(Diss_Index_Change < 0) %>%
+  arrange(Diss_Index_Change) %>%
+  group_by(Nationality) %>%
+  slice_head(n = 5)
+
+# View top MSOAs with decreased segregation
+print(top_msoas_decreased)
+
+# Top MSOAs where segregation INCREASED
+top_msoas_increased <- change_stats %>%
+  filter(Diss_Index_Change > 0) %>%
+  arrange(desc(Diss_Index_Change)) %>%
+  group_by(Nationality) %>%
+  slice_head(n = 5)
+
+# View top MSOAs with increased segregation
+print(top_msoas_increased)
+
+# Top Boroughs where segregation DECREASED
+top_boroughs_decreased <- change_stats %>%
+  filter(Diss_Index_Change < 0) %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarize(
+    Total_Change = sum(Diss_Index_Change),
+    .groups = "drop"
+  ) %>%
+  arrange(Total_Change) %>%
+  group_by(Nationality) %>%
+  slice_head(n = 5)
+
+# View top boroughs with decreased segregation
+print(top_boroughs_decreased)
+
+# Top Boroughs where segregation INCREASED
+top_boroughs_increased <- change_stats %>%
+  filter(Diss_Index_Change > 0) %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarize(
+    Total_Change = sum(Diss_Index_Change),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Total_Change)) %>%
+  group_by(Nationality) %>%
+  slice_head(n = 5)
+
+# View top boroughs with increased segregation
+print(top_boroughs_increased)
 ```
 
 

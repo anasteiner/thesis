@@ -42,9 +42,12 @@ aggregated_hn <- hn_data %>%
 ```
 
 ```{r}
-# Perform the join of housing + neighborhood + segregation
 segregation_analysis <- aggregated_hn %>%
-  left_join(census_data, by = c("MSOA11NM", "MSOA11CD", "Year"))
+  mutate(Year = as.character(Year)) %>% # Convert Year to character in aggregated_hn
+  left_join(census_data, by = c("MSOA11NM", "MSOA11CD", "Year")) # Perform the join
+
+# Check the result
+print(segregation_analysis)
 ```
 
 ```{r}
@@ -68,14 +71,14 @@ final_segregation <- segregation_sf %>%
     Owned,
     Houseprice,
     Overoccupation = Occupation,
-    geometry,
+    geometry = geometry.y,
     Crime = MSOA_crime,
     Greenery = MSOA_percent_green,
     PTAL,
     Nationality,
     Proportion,
-    Diss_Index,
-    lagged_diss,
+    Dissimilarity_Index,
+    Lagged_Dissimilarity,
   ) 
 
 filtered_segregation <- final_segregation %>%
@@ -87,10 +90,6 @@ filtered_segregation <- final_segregation %>%
 ### Correlation matrix for each nationality
 
 ```{r}
-library(ggcorrplot)
-library(dplyr)
-library(sf)
-
 # Directory for correlation matrices
 dir.create("correlation_matrices", showWarnings = FALSE)
 
@@ -103,15 +102,18 @@ for (nationality in unique(filtered_segregation$Nationality)) {
   
   # Subset relevant variables for correlation
   correlation_data <- nat_data %>%
-    select(
-      Diss_Index, Proportion, Rent, Socialhousing, Owned, Houseprice,
-      Overoccupation, Crime, Greenery, PTAL,
-      lagged_diss
+    dplyr::select(
+      Dissimilarity_Index, Proportion, Rent, Socialhousing, Owned, Houseprice,
+      Overoccupation, Crime, Greenery, PTAL, Lagged_Dissimilarity
     )
   
   # Remove rows with missing values
   correlation_data <- correlation_data %>%
     na.omit()
+  
+  # Convert all columns to numeric (if necessary)
+  correlation_data <- correlation_data %>%
+    mutate(across(everything(), as.numeric))
   
   # Check if enough variables remain for correlation
   if (nrow(correlation_data) > 0 && ncol(correlation_data) > 1) {
@@ -174,9 +176,9 @@ library(dplyr)
 
 predictors <- filtered_segregation %>%
   st_drop_geometry() %>%  
-  select(Proportion, Rent, Socialhousing, Owned, Houseprice,
+  dplyr::select(Proportion, Rent, Socialhousing, Owned, Houseprice,
       Overoccupation, Crime, Greenery, PTAL,
-      lagged_diss) %>% 
+      Lagged_Dissimilarity) %>% 
   na.omit()  # Ensure no missing values
 
 # Function to calculate VIF manually
@@ -213,7 +215,7 @@ dir.create("scatterplots", showWarnings = FALSE)
 
 # Specify the variables for scatterplots
 x_vars <- c("Rent", "Socialhousing", "Owned", "Houseprice", 
-            "Overoccupation", "Crime", "Greenery", "PTAL", "lagged_diss")
+            "Overoccupation", "Crime", "Greenery", "PTAL", "Lagged_Dissimilarity")
 
 # Loop through each nationality
 for (nationality in unique(filtered_segregation$Nationality)) {
@@ -325,7 +327,7 @@ scaled_segregation <- filtered_segregation %>%
 # Define variables
 housing_variables <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_Overoccupation", "scaled_Owned")
 neighborhood_variables <- c("scaled_Crime", "scaled_Greenery", "scaled_PTAL")
-all_variables <- c(housing_variables, "lagged_diss", neighborhood_variables)
+all_variables <- c(housing_variables, "Lagged_Dissimilarity", neighborhood_variables)
 nationalities <- unique(scaled_segregation$Nationality)
 
 # Create directory for regression outputs
@@ -344,7 +346,7 @@ for (nationality in nationalities) {
   }
   
   # Define dependent variable
-  y_variable <- "Diss_Index"
+  y_variable <- "Dissimilarity_Index"
   
   # Initialize list to store models
   models <- list()

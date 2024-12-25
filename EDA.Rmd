@@ -51,7 +51,7 @@ msoa_census <- msoa_geometry %>%
 colnames(msoa_census)
 
 # Clean final columns
-msoa_census_final <- msoa_census[, c("MSOA11CD.x", "MSOA11NM", "LAD11NM", "Year", "Nationality", "Proportion", "Diss_Index", "lagged_diss", "Theil_H", "Isolation", "geometry")]
+msoa_census_final <- msoa_census[, c("MSOA11CD.x", "MSOA11NM", "LAD11NM", "Year", "Nationality", "Proportion", "Dissimilarity_Index", "lagged_diss", "H", "Isolation_Index", "geometry.x")]
 ```
 
 ```{r}
