@@ -419,109 +419,6 @@ for (nationality in nationalities) {
   }, silent = FALSE)
 }
 ```
-```{r}
-summary(model)
-summary(housing_lagged_model)
-summary(full_model)
-```
-
-
-### Temporal analysis of Linear regressions for policy analysis
-
-```{r}
-# Define policies
-policy_info <- tibble(
-  Policy = c("Right to Buy", "Welfare Reform Act", "Elephant and Castle Redevelopment",
-             "Affordable Housing Program", "Housing Act 2004"),
-  Pre_Years = list(1970:1979, 2000:2011, 2000:2003, 2000:2015, 2000:2003),
-  Policy_Years = list(1980:2010, 2012:2016, 2004:2021, 2016:2022, 2004:2011),
-  Post_Years = list(2011:2023, 2017:2023, 2022:2023, 2023:2023, 2012:2023),
-  Geographical_Scope = list(
-    c("Barking", "Havering", "Redbridge", "Newham", "Haringey"),
-    c("Newham", "Tower Hamlets", "Barking and Dagenham", "Hackney", "Enfield"),
-    c("Southwark"),
-    c("Newham", "Tower Hamlets", "Croydon", "Barking"),
-    c("Tower Hamlets", "Hackney", "Newham", "Brent", "Ealing")
-  )
-)
-
-# Add policy periods and scope
-filtered_segregation <- filtered_segregation %>%
-  mutate(
-    Policy = case_when(
-      Borough %in% policy_info$Geographical_Scope[[1]] & Year %in% policy_info$Policy_Years[[1]] ~ "Right to Buy",
-      Borough %in% policy_info$Geographical_Scope[[2]] & Year %in% policy_info$Policy_Years[[2]] ~ "Welfare Reform Act",
-      Borough %in% policy_info$Geographical_Scope[[3]] & Year %in% policy_info$Policy_Years[[3]] ~ "Elephant and Castle Redevelopment",
-      Borough %in% policy_info$Geographical_Scope[[4]] & Year %in% policy_info$Policy_Years[[4]] ~ "Affordable Housing Program",
-      Borough %in% policy_info$Geographical_Scope[[5]] & Year %in% policy_info$Policy_Years[[5]] ~ "Housing Act 2004",
-      TRUE ~ "No Policy"
-    ),
-    Period = case_when(
-      Year %in% unlist(policy_info$Pre_Years) ~ "Pre-Policy",
-      Year %in% unlist(policy_info$Policy_Years) ~ "Policy",
-      Year %in% unlist(policy_info$Post_Years) ~ "Post-Policy",
-      TRUE ~ "No Period"
-    )
-  )
-```
-
-```{r}
-# Run regressions for each policy
-policy_results <- list()
-
-for (policy in unique(filtered_segregation$Policy)) {
-  # Filter data for the policy
-  policy_data <- filtered_segregation %>%
-    filter(Policy == policy)
-  
-  # Run separate models for each period
-  for (period in c("Pre-Policy", "Policy", "Post-Policy")) {
-    period_data <- policy_data %>%
-      filter(Period == period)
-    
-    if (nrow(period_data) > 0) {
-      # Define the formula
-      formula <- Diss_Index ~ Rent + Socialhousing + Owned + Houseprice + Overoccupation
-      
-      # Fit the model
-      model <- lm(formula, data = period_data)
-      
-      # Store results
-      policy_results[[paste(policy, period, sep = "_")]] <- model
-    }
-  }
-}
-```
-
-```{r}
-# Add Affected column
-filtered_segregation <- filtered_segregation %>%
-  mutate(Affected = Borough %in% unlist(policy_info$Geographical_Scope))
-
-# Run regression for affected and non-affected MSOAs
-affected_model <- lm(Diss_Index ~ Rent + Socialhousing + Owned + Houseprice + Overoccupation,
-                     data = filtered_segregation %>% filter(Affected == TRUE))
-
-non_affected_model <- lm(Diss_Index ~ Rent + Socialhousing + Owned + Houseprice + Overoccupation,
-                         data = filtered_segregation %>% filter(Affected == FALSE))
-
-# Compare models
-summary(affected_model)
-summary(non_affected_model)
-```
-
-```{r}
-library(stargazer)
-library(sjPlot)
-
-# Save regression tables for policies
-stargazer(policy_results, type = "html", out = "policy_results.html")
-
-# Compare affected vs. non-affected models
-tab_model(affected_model, non_affected_model,
-          file = "affected_vs_non_affected.html",
-          show.ci = TRUE, dv.labels = c("Affected MSOAs", "Non-Affected MSOAs"))
-```
 
 ## GWR 
 Explores spatial variations in these relationships, revealing local heterogeneity.
@@ -538,16 +435,17 @@ dir.create("gwr_outputs", showWarnings = FALSE)
 
 # Define predictors and dependent variable
 y_var <- "Diss_Index"
-x_vars <- c("Rent", "Overoccupation", "Socialhousing", "Owned", "Houseprice", "PTAL", "Crime", "Greenery", "lagged_diss")
+x_vars <- c("scaled_Rent", "scaled_Overoccupation", "scaled_Socialhousing", "scaled_Owned", 
+            "scaled_Houseprice", "scaled_PTAL", "scaled_Crime", "scaled_Greenery", "lagged_diss")
 
 # Loop through nationalities and years
-nationalities <- unique(filtered_segregation$Nationality)
-years <- unique(ffiltered_segregation$Year)
+nationalities <- unique(scaled_segregation$Nationality)
+years <- unique(scaled_segregation$Year)
 
 for (nationality in nationalities) {
   for (year in years) {
     # Filter data for the current nationality and year
-    gwr_data <- filtered_segregation %>%
+    gwr_data <- scaled_segregation %>%
       filter(Nationality == nationality, Year == year) %>%
       distinct(MSOA11CD, .keep_all = TRUE)  # Ensure unique geometries
     
@@ -558,6 +456,10 @@ for (nationality in nationalities) {
     }
     
     # Convert to spatial data and transform CRS
+    if (!"geometry" %in% colnames(gwr_data)) {
+      message(paste("Skipping GWR for", nationality, year, "- geometry missing"))
+      next
+    }
     gwr_data <- gwr_data %>%
       st_as_sf() %>%
       st_transform(crs = 27700)  # Example CRS: British National Grid
@@ -578,7 +480,15 @@ for (nationality in nationalities) {
     
     # Fit GWR model
     tryCatch({
-      bw <- gwr.sel(gwr_formula, data = gwr_data, coords = cbind(gwr_data$X, gwr_data$Y))
+      # Select bandwidth
+      bw <- gwr.sel(
+        gwr_formula, 
+        data = gwr_data, 
+        coords = cbind(gwr_data$X, gwr_data$Y),
+        adapt = TRUE
+      )
+      
+      # Run GWR
       gwr_model <- gwr.basic(
         formula = gwr_formula,
         data = gwr_data,
