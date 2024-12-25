@@ -523,33 +523,48 @@ census_data_clean <- na.omit(finalest_census_dt)
 ```
 
 ```{r}
-# Filter MSOAs with Dissimilarity_Index > 1 for each nationality
-high_dissimilarity_msoas <- finalest_census_dt %>%
-  filter(Dissimilarity_Index > 1) %>% # Filter rows where the index is above 1
-  group_by(Nationality) %>% # Group by nationality
+# Replace Dissimilarity_Index > 1 with 0.8 in base R
+finalest_census_dt$Dissimilarity_Index <- ifelse(
+  finalest_census_dt$Dissimilarity_Index > 1,
+  0.8,
+  finalest_census_dt$Dissimilarity_Index
+)
+
+# Filter rows where Dissimilarity_Index is 0.8 and summarize by Nationality
+high_dissimilarity_msoas <- finalest_census_dt[finalest_census_dt$Dissimilarity_Index == 0.8, ] %>%
+  group_by(Nationality) %>%
   summarise(
-    MSOA_Count = n(), # Count the number of MSOAs
-    MSOAs = paste(unique(MSOA11CD), collapse = ", ") # List unique MSOA codes
+    MSOA_Count = n(),
+    MSOAs = paste(unique(MSOA11CD), collapse = ", ")
   ) %>%
-  arrange(desc(MSOA_Count)) # Arrange by number of MSOAs in descending order
+  arrange(desc(MSOA_Count))
 
 # View the result
 print(high_dissimilarity_msoas)
 ```
 
 ```{r}
-# Calculate statistics
-min_value <- min(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
-max_value <- max(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
-median_value <- median(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
-mean_value <- mean(finalest_census_dt$Dissimilarity_Index, na.rm = TRUE)
-
-# Print results
-cat("Min:", min_value, "\n")
-cat("Max:", max_value, "\n")
-cat("Median:", median_value, "\n")
-cat("Mean:", mean_value, "\n")
+# Loop through each nationality and calculate statistics
+for (nationality in unique(finalest_census_dt$Nationality)) {
+  # Filter data for the current nationality
+  nat_data <- finalest_census_dt %>%
+    filter(Nationality == nationality)
+  
+  # Calculate statistics
+  min_value <- min(nat_data$Dissimilarity_Index, na.rm = TRUE)
+  max_value <- max(nat_data$Dissimilarity_Index, na.rm = TRUE)
+  median_value <- median(nat_data$Dissimilarity_Index, na.rm = TRUE)
+  mean_value <- mean(nat_data$Dissimilarity_Index, na.rm = TRUE)
+  
+  # Print results for the current nationality
+  cat("Nationality:", nationality, "\n")
+  cat("Min:", min_value, "\n")
+  cat("Max:", max_value, "\n")
+  cat("Median:", median_value, "\n")
+  cat("Mean:", mean_value, "\n\n")
+}
 ```
+
 ### Visualice histograms and boxplots of distributions
 
 ```{r}
@@ -838,28 +853,13 @@ for (nationality in nationalities) {
 }
 ```
 
-### Borough-Level Statistics for Dissimilarity Index
-
-```{r}
-borough_stats <- finalest_census_dt %>%
-  group_by(LAD11NM, Nationality) %>%
-  summarize(
-    mean_Dissimilarity_Index = mean(Dissimilarity_Index, na.rm = TRUE),
-    min_Dissimilarity_Index = min(Dissimilarity_Index, na.rm = TRUE),
-    max_Dissimilarity_Index = max(Dissimilarity_Index, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-print(borough_stats)
-```
-
-### Identify MSOAs and Boroughs with Most Changes in Dissimilarity Index
+### Identify MSOAs with Most Changes in Dissimilarity Index
 
 ```{r}
 # Calculate change in Diss_Index over time
 change_stats <- finalest_census_dt %>%
   filter(!is.na(Dissimilarity_Index), !is.na(Nationality)) %>%  # Remove rows with NA Diss_Index or Nationality
-  group_by(MSOA11CD, LAD11NM, Nationality) %>%
+  group_by(MSOA11CD, Nationality) %>%
   summarize(
     Diss_Index_Change = max(Dissimilarity_Index) - min(Dissimilarity_Index),  # No need for na.rm as NA rows are excluded
     .groups = "drop"
@@ -884,36 +884,6 @@ top_msoas_increased <- change_stats %>%
 
 # View top MSOAs with increased segregation
 print(top_msoas_increased)
-
-# Top Boroughs where segregation DECREASED
-top_boroughs_decreased <- change_stats %>%
-  filter(Diss_Index_Change < 0) %>%
-  group_by(LAD11NM, Nationality) %>%
-  summarize(
-    Total_Change = sum(Diss_Index_Change),
-    .groups = "drop"
-  ) %>%
-  arrange(Total_Change) %>%
-  group_by(Nationality) %>%
-  slice_head(n = 5)
-
-# View top boroughs with decreased segregation
-print(top_boroughs_decreased)
-
-# Top Boroughs where segregation INCREASED
-top_boroughs_increased <- change_stats %>%
-  filter(Diss_Index_Change > 0) %>%
-  group_by(LAD11NM, Nationality) %>%
-  summarize(
-    Total_Change = sum(Diss_Index_Change),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(Total_Change)) %>%
-  group_by(Nationality) %>%
-  slice_head(n = 5)
-
-# View top boroughs with increased segregation
-print(top_boroughs_increased)
 ```
 
 
