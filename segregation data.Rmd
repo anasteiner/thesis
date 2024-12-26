@@ -59,6 +59,7 @@ lsoa <- dplyr::select(lsoa, -MSOA11CD, -MSOA11NM, -LAD11CD, -LAD11NM, -RGN11CD, 
 
 # Eliminate columns
 borough <- dplyr::select(borough, -HECTARES, -NONLD_AREA, -ONS_INNER, -SUB_2009, -SUB_2006)
+dff
 ```
 
 ### Demographic data
