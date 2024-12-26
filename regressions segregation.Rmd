@@ -38,7 +38,6 @@ hn_data <- housing_data %>%
 aggregated_hn <- hn_data %>%
   group_by(MSOA11CD, MSOA11NM, Year) %>%  # Group by MSOA and Year
   summarize(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")  # Average numeric columns
-
 ```
 
 ```{r}
@@ -90,6 +89,8 @@ filtered_segregation <- final_segregation %>%
 ### Correlation matrix for each nationality
 
 ```{r}
+library(ggcorrplot)
+
 # Directory for correlation matrices
 dir.create("correlation_matrices", showWarnings = FALSE)
 
@@ -207,44 +208,75 @@ The latest VIF results indicate that all predictors fall within acceptable thres
 ### Scatterplot for individual correlations
 
 ```{r}
+# Load required libraries
+library(tidyverse)
+
+# Scaling all variables
+scaled_segregation <- filtered_segregation %>%
+  mutate(
+    # Housing variables
+    scaled_Rent = Rent / 1000,                  # Scale Rent (thousands to smaller range)
+    scaled_Socialhousing = Socialhousing / 100,              # Scale Budget (billions to smaller range)
+    scaled_Houseprice = Houseprice / 100000,   # Scale Houseprice (hundreds of thousands to smaller range)
+    scaled_Overoccupation = Overoccupation / 1000,     # Scale Occupation (hundreds to smaller range)
+    scaled_Owned = Owned,                      # Keep Owned unchanged (already 0-1)
+    # Neighborhood variables
+    scaled_Crime = Crime / 10,                 # Scale Crime (reduce magnitude for alignment)
+    scaled_Greenery = Greenery,                # Keep Greenery unchanged (already 0-1)
+    scaled_PTAL = PTAL                         # Keep PTAL unchanged (manageable range)
+  )
+```
+
+```{r}
 library(ggplot2)
 library(dplyr)
 
 # Ensure directory for scatterplot outputs exists
-dir.create("scatterplots", showWarnings = FALSE)
+dir.create("scatterplots_fixed", showWarnings = FALSE)
 
-# Specify the variables for scatterplots
-x_vars <- c("Rent", "Socialhousing", "Owned", "Houseprice", 
+# Specify the variables for scatterplots (on the Y-axis)
+y_vars <- c("Rent", "Socialhousing", "Owned", "Houseprice",
             "Overoccupation", "Crime", "Greenery", "PTAL", "Lagged_Dissimilarity")
 
 # Loop through each nationality
 for (nationality in unique(filtered_segregation$Nationality)) {
   # Filter data for the current nationality
   nat_data <- filtered_segregation %>%
-    filter(Nationality == nationality)
+    filter(Nationality == nationality) %>%
+    mutate(Dissimilarity_Index = as.numeric(Dissimilarity_Index))  # Ensure numeric
   
   # Generate scatterplots for each specified variable
-  for (x_var in x_vars) {
-    if (x_var %in% colnames(nat_data)) {  # Ensure variable exists in the data
-      scatter_plot <- ggplot(nat_data, aes_string(x = x_var, y = "Diss_Index")) +
+  for (y_var in y_vars) {
+    if (y_var %in% colnames(nat_data)) {  # Ensure variable exists in the data
+      # Clean the data: remove NA and outliers
+      clean_data <- nat_data %>%
+        mutate(!!sym(y_var) := as.numeric(!!sym(y_var))) %>%  # Ensure numeric
+        filter(
+          !is.na(Dissimilarity_Index), !is.na(!!sym(y_var)),  # Remove NA
+          Dissimilarity_Index < quantile(Dissimilarity_Index, 0.99, na.rm = TRUE),
+          !!sym(y_var) < quantile(!!sym(y_var), 0.99, na.rm = TRUE)
+        )
+      
+      # Create scatterplot
+      scatter_plot <- ggplot(clean_data, aes(x = Dissimilarity_Index, y = !!sym(y_var))) +
         geom_point(alpha = 0.5, color = "blue") +  # Scatter points
         geom_smooth(method = "lm", se = FALSE, color = "red") +  # Linear trendline
         labs(
-          title = paste("Scatterplot for", nationality, "-", x_var),
-          x = x_var,
-          y = "Dissimilarity Index"
+          title = paste("Scatterplot for", nationality, "-", y_var),
+          x = "Dissimilarity Index",
+          y = y_var
         ) +
         theme_minimal()
       
       # Save the scatterplot
       ggsave(
-        filename = paste0("scatterplots/scatterplot_", nationality, "_", x_var, ".png"),
+        filename = paste0("scatterplots_fixed/scatterplot_", nationality, "_", y_var, ".png"),
         plot = scatter_plot,
         width = 10,
         height = 6
       )
     } else {
-      message(paste("Variable", x_var, "not found for nationality:", nationality))
+      message(paste("Variable", y_var, "not found for nationality:", nationality))
     }
   }
 }
@@ -304,26 +336,6 @@ No. 7 Lagged settlement model
 Incorporate the lagged settlement variable alongside all housing variables to capture temporal dependencies.
 
 ```{r}
-# Load required libraries
-library(tidyverse)
-
-# Scaling all variables
-scaled_segregation <- filtered_segregation %>%
-  mutate(
-    # Housing variables
-    scaled_Rent = Rent / 1000,                  # Scale Rent (thousands to smaller range)
-    scaled_Socialhousing = Socialhousing / 100,              # Scale Budget (billions to smaller range)
-    scaled_Houseprice = Houseprice / 100000,   # Scale Houseprice (hundreds of thousands to smaller range)
-    scaled_Overoccupation = Overoccupation / 1000,     # Scale Occupation (hundreds to smaller range)
-    scaled_Owned = Owned,                      # Keep Owned unchanged (already 0-1)
-    # Neighborhood variables
-    scaled_Crime = Crime / 10,                 # Scale Crime (reduce magnitude for alignment)
-    scaled_Greenery = Greenery,                # Keep Greenery unchanged (already 0-1)
-    scaled_PTAL = PTAL                         # Keep PTAL unchanged (manageable range)
-  )
-```
-
-```{r}
 # Define variables
 housing_variables <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_Overoccupation", "scaled_Owned")
 neighborhood_variables <- c("scaled_Crime", "scaled_Greenery", "scaled_PTAL")
@@ -360,7 +372,7 @@ for (nationality in nationalities) {
   }
   
   # 2. Model with all housing variables + lagged_diss
-  housing_lagged_formula <- paste(y_variable, "~", paste(housing_variables, collapse = " + "), "+ lagged_diss")
+  housing_lagged_formula <- paste(y_variable, "~", paste(housing_variables, collapse = " + "), "+ Lagged_Dissimilarity")
   housing_lagged_model <- lm(as.formula(housing_lagged_formula), data = nationality_data, na.action = na.exclude)
   models[["Housing_Lagged"]] <- housing_lagged_model
   

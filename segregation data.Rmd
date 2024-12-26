@@ -360,201 +360,121 @@ census_final$Proportion <- ifelse(census_final$Proportion == 0, 0.00001, census_
 #### Dissimiliarity index
 
 ```{r}
-library(dplyr)
-library(sf)
+library(data.table)
 
-# Specify the nationalities to compare against the majority
-nationalities <- c("Romania", "Poland", "Caribbean", "SouthAmerica", "SEAfrica", "Bangladesh")
+# Convert to data.table
+census_final_dt <- as.data.table(census_final)
 
-# Get unique years
-years <- unique(census_final$Year)
+# Step 1: Calculate the dissimilarity index
+dissimilarity_index_dt <- census_final_dt[
+  , Majority_Prop := Proportion[Nationality == "Majority"], by = .(Year, MSOA11CD)
+][
+  Nationality != "Majority", # Exclude Majority group
+  .(D_Index = 0.5 * sum(abs(Proportion - Majority_Prop))), by = .(Year, MSOA11CD, Nationality)
+]
 
-# Initialize a dataframe to store results
-dissimilarity_results <- data.frame(
-  MSOA11CD = character(), 
-  Year = integer(), 
-  Nationality = character(), 
-  Dissimilarity_Index = numeric(), 
-  stringsAsFactors = FALSE
-)
-
-for (year in years) {
-  for (nat in nationalities) {
-    # Filter data for the majority population in the current year
-    data_majority <- census_final %>%
-      filter(Nationality == "Majority" & Year == year) %>%
-      st_drop_geometry() %>%
-      dplyr::select(MSOA11CD, Year, Population) %>%
-      rename(Population_majority = Population)
-
-    # Filter data for the specific nationality in the current year
-    data_nationality <- census_final %>%
-      filter(Nationality == nat & Year == year) %>%
-      st_drop_geometry() %>%
-      dplyr::select(MSOA11CD, Year, Population) %>%
-      rename(Population_nat = Population)
-
-    # Merge the majority and nationality data on MSOA and Year
-    merged_data <- merge(data_majority, data_nationality, by = c("MSOA11CD", "Year"))
-
-    if (nrow(merged_data) > 0) {
-      # Calculate the total population for majority and the target nationality
-      total_majority <- sum(merged_data$Population_majority)
-      total_nat <- sum(merged_data$Population_nat)
-
-      # Calculate the Dissimilarity Index for each MSOA using count data and scale by 1000
-      merged_data <- merged_data %>%
-        mutate(Dissimilarity = 0.5 * abs((Population_majority / total_majority) - (Population_nat / total_nat)) * 100)
-
-      # Store the results
-      dissimilarity_results <- rbind(
-        dissimilarity_results,
-        data.frame(
-          MSOA11CD = merged_data$MSOA11CD,
-          Year = merged_data$Year,
-          Nationality = nat,
-          Dissimilarity_Index = merged_data$Dissimilarity
-        )
-      )
-    }
-  }
-}
-
-# Print the dissimilarity results
-print(dissimilarity_results)
-
-# Join the Dissimilarity Index back to the original dataset if needed
-census_final_updated <- census_final %>%
-  left_join(dissimilarity_results, by = c("MSOA11CD", "Year", "Nationality"))
-
-# Print or save the updated dataset
-print(census_final_updated)
+# Step 2: Join the D_Index back to the original dataset
+census_final_updated_dt <- census_final_dt[
+  dissimilarity_index_dt,
+  on = .(Year, MSOA11CD, Nationality),
+  D_Index := i.D_Index
+]
 ```
 
 #### Lagged diss (-1)
 
 ```{r}
 # Calculate the lagged Dissimilarity Index and handle 2001 case
-census_final_updated <- census_final_updated %>%
+census_final_updated_dt <- census_final_updated_dt %>%
   arrange(MSOA11CD, Nationality, Year) %>% # Ensure data is sorted by MSOA, Nationality, and Year
   group_by(MSOA11CD, Nationality) %>% # Group by MSOA and Nationality
   mutate(
-    Lagged_Dissimilarity = lag(Dissimilarity_Index), # Calculate the lagged value
-    Lagged_Dissimilarity = ifelse(is.na(Lagged_Dissimilarity) & Year == 2001, Dissimilarity_Index, Lagged_Dissimilarity) # Repeat 2001 value
+    Lagged_Dissimilarity = lag(D_Index), # Calculate the lagged value
+    Lagged_Dissimilarity = ifelse(is.na(Lagged_Dissimilarity) & Year == 2001, D_Index, Lagged_Dissimilarity) # Repeat 2001 value
   ) %>%
   ungroup() # Remove grouping
 
 # Print the updated dataset
-print(census_final_updated)
+print(census_final_updated_dt)
 ```
 
 ### Theil's H index
 ```{r}
+# Ensure the dataset is a data.table
+census_final_updated_dt <- as.data.table(census_final_updated_dt)
 
-library(data.table)
-final_census_dt <- as.data.table(census_final_updated)
+# Step 1: Calculate Theil's H
+theils_h_results <- census_final_updated_dt[
+  Nationality != "Majority", # Exclude the Majority group
+  .(Theils_H = sum(ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0), na.rm = TRUE)), # Compute Theil's H
+  by = .(MSOA11CD, Year) # Group by MSOA and Year
+]
 
-# Function to calculate Theil's H for a given dataframe
-calculate_theils_h <- function(df) {
-  df <- df %>%
-    mutate(Theils_H = ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0))  
-  return(sum(df$Theils_H, na.rm = TRUE))  
-}
-
-theils_h_results <- final_census_dt[Nationality != "Total_Population" & Nationality != "Majority",
-                                    .(H = sum(ifelse(Proportion > 0, Proportion * log(1 / Proportion), 0), na.rm = TRUE)),
-                                    by = .(MSOA11CD, Year)]
-
-# Merge Theil's H results back into the final_census dataframe
-final_final_census <- census_final_updated %>%
-  left_join(theils_h_results, by = c("MSOA11CD", "Year"))
-
-# Check the result
-print(final_final_census)
+# Step 2: Merge Theil's H results back into the original dataset
+census_final_updated_dt <- census_final_updated_dt[
+  theils_h_results,
+  on = .(MSOA11CD, Year),
+  Theils_H := i.Theils_H # Add Theil's H as a new column
+]
 
 ```
 
 ### Isolation index
 ```{r}
-# Convert final_final_census to data.table
-final_final_census_dt <- as.data.table(final_final_census)
+library(data.table)
 
-# Function to calculate Isolation Index for a given data.table
-calculate_isolation_index <- function(df) {
-  df[, .(Isolation_Index = sum(Proportion^2, na.rm = TRUE))]
-}
-
-# Calculate Isolation Index for each MSOA and Year using data.table
-isolation_results_dt <- final_final_census_dt[
-  Nationality != "Total_Population" & Nationality != "Majority", 
-  calculate_isolation_index(.SD), 
+# Normalize proportions within the subset (excluding Majority)
+census_final_updated_dt[
+  Nationality != "Majority",
+  Proportion_Subset := Proportion / sum(Proportion, na.rm = TRUE),
   by = .(MSOA11CD, Year)
 ]
 
-# Merge Isolation Index results back into the original data.table
-finalest_census_dt <- merge(final_final_census_dt, isolation_results_dt, by = c("MSOA11CD", "Year"), all.x = TRUE)
+# Calculate the Isolation Index for the subset
+isolation_results_dt <- census_final_updated_dt[
+  Nationality != "Majority",
+  .(Isolation_Index = sum(Proportion_Subset^2, na.rm = TRUE)), # Correct calculation for the subset
+  by = .(MSOA11CD, Year)
+]
 
-# Check the result
-print(finalest_census_dt)
+# Merge Isolation Index back into the original dataset
+census_final_updated_dt[
+  isolation_results_dt,
+  on = .(MSOA11CD, Year),
+  Isolation_Index := i.Isolation_Index
+]
+
+# View the updated dataset
+print(census_final_updated_dt)
 ```
 
 ```{r}
 # Final cleaning
 
 # Filter out rows where Nationality is "Total_Population" or "Majority"
-finalest_census_dt <- finalest_census_dt[!(Nationality %in% c("Total_Population", "Majority"))]
+census_final_updated_dt <- census_final_updated_dt[!(Nationality %in% c("Total_Population", "Majority"))]
 
 # Remove the columns "Total_Pop" and "Population"
-finalest_census_dt <- finalest_census_dt[, !c("Total_Pop", "Population"), with = FALSE]
-```
-
-## Download CSV
-```{r}
-# Remove the geometry column from the data frame
-census_no_geo <- st_drop_geometry(finalest_census_dt)
-
-# Download as a csv 
-write.csv(census_no_geo, "census_data.csv", row.names = FALSE)
+census_final_updated_dt <- census_final_updated_dt[, !c("Total_Pop", "Population"), with = FALSE]
 ```
 
 ```{r}
 # Remove rows with any NA values
-census_data_clean <- na.omit(finalest_census_dt)
-```
-
-```{r}
-# Replace Dissimilarity_Index > 1 with 0.8 in base R
-finalest_census_dt$Dissimilarity_Index <- ifelse(
-  finalest_census_dt$Dissimilarity_Index > 1,
-  0.8,
-  finalest_census_dt$Dissimilarity_Index
-)
-
-# Filter rows where Dissimilarity_Index is 0.8 and summarize by Nationality
-high_dissimilarity_msoas <- finalest_census_dt[finalest_census_dt$Dissimilarity_Index == 0.8, ] %>%
-  group_by(Nationality) %>%
-  summarise(
-    MSOA_Count = n(),
-    MSOAs = paste(unique(MSOA11CD), collapse = ", ")
-  ) %>%
-  arrange(desc(MSOA_Count))
-
-# View the result
-print(high_dissimilarity_msoas)
+census_data_clean <- na.omit(census_final_updated_dt)
 ```
 
 ```{r}
 # Loop through each nationality and calculate statistics
-for (nationality in unique(finalest_census_dt$Nationality)) {
+for (nationality in unique(census_data_clean$Nationality)) {
   # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>%
+  nat_data <- census_data_clean %>%
     filter(Nationality == nationality)
   
   # Calculate statistics
-  min_value <- min(nat_data$Dissimilarity_Index, na.rm = TRUE)
-  max_value <- max(nat_data$Dissimilarity_Index, na.rm = TRUE)
-  median_value <- median(nat_data$Dissimilarity_Index, na.rm = TRUE)
-  mean_value <- mean(nat_data$Dissimilarity_Index, na.rm = TRUE)
+  min_value <- min(nat_data$D_Index, na.rm = TRUE)
+  max_value <- max(nat_data$D_Index, na.rm = TRUE)
+  median_value <- median(nat_data$D_Index, na.rm = TRUE)
+  mean_value <- mean(nat_data$D_Index, na.rm = TRUE)
   
   # Print results for the current nationality
   cat("Nationality:", nationality, "\n")
@@ -572,8 +492,8 @@ for (nationality in unique(finalest_census_dt$Nationality)) {
 dir.create("distribution_plots", showWarnings = FALSE)
 
 # Histograms for all indices
-for (var in c("Proportion", "Dissimilarity_Index", "Isolation_Index", "H")) {
-  hist_plot <- ggplot(finalest_census_dt, aes_string(x = var)) +
+for (var in c("Proportion", "D_Index", "Isolation_Index", "Theils_H")) {
+  hist_plot <- ggplot(census_data_clean, aes_string(x = var)) +
     geom_histogram(bins = 30, fill = "blue", color = "black", alpha = 0.7) +
     facet_wrap(~ Nationality, scales = "free") +
     labs(title = paste("Histogram of", var, "by Nationality"),
@@ -586,8 +506,8 @@ for (var in c("Proportion", "Dissimilarity_Index", "Isolation_Index", "H")) {
 }
 
 # Boxplots for all indices
-for (var in c("Proportion", "Dissimilarity_Index", "Isolation_Index", "H")) {
-  box_plot <- ggplot(finalest_census_dt, aes(x = Nationality, y = !!sym(var))) +
+for (var in c("Proportion", "D_Index", "Isolation_Index", "Theils_H")) {
+  box_plot <- ggplot(census_data_clean, aes(x = Nationality, y = !!sym(var))) +
     geom_boxplot(fill = "lightblue", color = "black", alpha = 0.7) +
     labs(title = paste("Boxplot of", var, "by Nationality"),
          x = "Nationality", y = var) +
@@ -605,16 +525,16 @@ library(ggplot2)
 library(dplyr)
 
 # Ensure Year is numeric
-finalest_census_dt$Year <- as.numeric(finalest_census_dt$Year)
+census_data_clean$Year <- as.numeric(census_data_clean$Year)
 
 # Aggregate data by Year and Nationality
-aggregated_data <- finalest_census_dt %>%
+aggregated_data <- census_data_clean %>%
   group_by(Year, Nationality) %>%
   summarize(
     Proportion = mean(Proportion, na.rm = TRUE),
-    Dissimilarity_Index = mean(Dissimilarity_Index, na.rm = TRUE),
+    D_Index = mean(D_Index, na.rm = TRUE),
     Lagged_Dissimilarity = mean(Lagged_Dissimilarity, na.rm = TRUE),
-    H = mean(H, na.rm = TRUE),
+    Theils_H = mean(Theils_H, na.rm = TRUE),
     Isolation_Index = mean(Isolation_Index, na.rm = TRUE),
     .groups = "drop"
   )
@@ -633,8 +553,8 @@ for (nationality in nationalities) {
   # Generate the line plot
   plot <- ggplot(nat_data) +
     geom_line(aes(x = Year, y = Proportion, color = "Proportion"), size = 1.2) +
-    geom_line(aes(x = Year, y = Dissimilarity_Index, color = "Dissimilarity Index"), size = 1.2) +
-    geom_line(aes(x = Year, y = H, color = "Theil's H"), size = 1.2) +
+    geom_line(aes(x = Year, y = D_Index, color = "Dissimilarity Index"), size = 1.2) +
+    geom_line(aes(x = Year, y = Theils_H, color = "Theil's H"), size = 1.2) +
     geom_line(aes(x = Year, y = Isolation_Index, color = "Isolation Index"), size = 1.2) +
     labs(
       title = paste("Temporal Trends for", nationality),
@@ -659,21 +579,26 @@ for (nationality in nationalities) {
 ### Visualice and compare temporal line graph between all nationalities
 ```{r}
 # Create line graph for Dissimilarity Index comparing all nationalities
-dissimilarity_plot <- ggplot(aggregated_data, aes(x = Year, y = Dissimilarity_Index, color = Nationality, group = Nationality)) +
+dissimilarity_plot <- ggplot(aggregated_data, aes(x = Year, y = D_Index, color = Nationality, group = Nationality)) +
   geom_line(size = 1.2) +
   geom_point(size = 2) +
   scale_y_continuous(
-    labels = function(x) x * 10, # Scale the y-axis labels by 10
-    breaks = seq(0.01, 0.07, by = 0.01) # Adjust breaks based on data range
+    breaks = scales::pretty_breaks(n = 6), # Automatically generate breaks for better readability
+    labels = scales::label_number(accuracy = 0.01) # Format labels with two decimal places
   ) +
   labs(
     title = "Dissimilarity Index Over Time (All Nationalities)",
     x = "Year",
-    y = "Scaled Dissimilarity Index (0.1 - 0.7)", # Update label for clarity
-    color = "Nationality"
+    y = "Dissimilarity Index", # Add clear y-axis label
+    color = "Nationality" # Legend title
   ) +
   theme_minimal() +
-  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.title.y = element_text(face = "bold", size = 12), # Style for y-axis label
+    legend.title = element_text(face = "bold"), # Bold legend title
+    legend.position = "right" # Ensure the legend is visible
+  )
 
 # Save the plot
 dir.create("line_graphs_comparison", showWarnings = FALSE)
@@ -691,12 +616,12 @@ library(Matrix)
 library(FNN)
 
 # Ensure consistent CRS for geometries
-finalest_census_dt <- finalest_census_dt %>%
+census_data_clean <- census_data_clean %>%
   st_as_sf() %>% # Ensure it is an sf object
   st_transform(crs = 27700) # Example: British National Grid
 
 # Create unique geometries with MSOA codes
-unique_geometries <- finalest_census_dt %>%
+unique_geometries <- census_data_clean %>%
   group_by(MSOA11CD) %>%
   slice(1) %>% # Retain the first row for each MSOA11CD
   ungroup() %>% # Remove grouping to avoid issues in downstream operations
@@ -707,14 +632,14 @@ unique_geometries <- finalest_census_dt %>%
 unique_geometries <- st_transform(unique_geometries, crs = 27700)
 
 # Get unique nationalities
-nationalities <- unique(finalest_census_dt$Nationality)
+nationalities <- unique(census_data_clean$Nationality)
 
 # Loop through each nationality
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>%
+  nat_data <- census_data_clean %>%
     filter(Nationality == nationality) %>%
-    dplyr::select(MSOA11CD, Year, Dissimilarity_Index, geometry) %>%
+    dplyr::select(MSOA11CD, Year, D_Index, geometry) %>%
     distinct()
 
   # Use st_join for spatial join (ensuring proper handling of sf objects)
@@ -724,7 +649,7 @@ for (nationality in nationalities) {
   nat_data <- st_as_sf(nat_data)
 
   # Prepare dissimilarity index values and handle missing data
-  x <- nat_data$Dissimilarity_Index
+  x <- nat_data$D_Index
   x[is.na(x)] <- mean(x, na.rm = TRUE)  # Replace NA with mean value
   x_mean <- mean(x, na.rm = TRUE)
 
@@ -759,10 +684,10 @@ for (nationality in nationalities) {
   nat_data <- nat_data %>%
     mutate(Local_I = local_moran,
            Quadrant = case_when(
-             (Dissimilarity_Index > x_mean & Local_I > 0) ~ "High-High",
-             (Dissimilarity_Index < x_mean & Local_I > 0) ~ "Low-Low",
-             (Dissimilarity_Index > x_mean & Local_I < 0) ~ "High-Low",
-             (Dissimilarity_Index < x_mean & Local_I < 0) ~ "Low-High",
+             (D_Index > x_mean & Local_I > 0) ~ "High-High",
+             (D_Index < x_mean & Local_I > 0) ~ "Low-Low",
+             (D_Index > x_mean & Local_I < 0) ~ "High-Low",
+             (D_Index < x_mean & Local_I < 0) ~ "Low-High",
              TRUE ~ "Non-significant"
            ))
 
@@ -822,16 +747,16 @@ library(sf)
 dir.create("spatial_maps", showWarnings = FALSE)
 
 # Loop through each nationality to create maps
-nationalities <- unique(finalest_census_dt$Nationality)
+nationalities <- unique(census_data_clean$Nationality)
 
 for (nationality in nationalities) {
   # Filter data for the current nationality
-  nat_data <- finalest_census_dt %>%
+  nat_data <- census_data_clean %>%
     filter(Nationality == nationality)
   
   # Plot map for the current nationality
   diss_map <- ggplot(nat_data) +
-    geom_sf(aes(fill = Dissimilarity_Index, geometry = geometry), color = NA) +
+    geom_sf(aes(fill = D_Index, geometry = geometry), color = NA) +
     scale_fill_viridis_c(option = "C", name = "Dissimilarity Index") +
     labs(
       title = paste("Dissimilarity Index Across London -", nationality),
@@ -857,11 +782,11 @@ for (nationality in nationalities) {
 
 ```{r}
 # Calculate change in Diss_Index over time
-change_stats <- finalest_census_dt %>%
-  filter(!is.na(Dissimilarity_Index), !is.na(Nationality)) %>%  # Remove rows with NA Diss_Index or Nationality
+change_stats <- census_data_clean %>%
+  filter(!is.na(D_Index), !is.na(Nationality)) %>%  # Remove rows with NA Diss_Index or Nationality
   group_by(MSOA11CD, Nationality) %>%
   summarize(
-    Diss_Index_Change = max(Dissimilarity_Index) - min(Dissimilarity_Index),  # No need for na.rm as NA rows are excluded
+    Diss_Index_Change = max(D_Index) - min(D_Index),  # No need for na.rm as NA rows are excluded
     .groups = "drop"
   )
 
@@ -886,6 +811,601 @@ top_msoas_increased <- change_stats %>%
 print(top_msoas_increased)
 ```
 
+# Load all packages
+```{r}
+library(tidyverse)
+library(sf)
+library(sp)
+library(spgwr)
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+library(xts)
+library(zoo)
+```
 
+```{r}
+# Read the datasets
+setwd("/Users/anamariasteinercorrea/thesis")
+housing_data <- read_csv("/Users/anamariasteinercorrea/Documents/thesis/housing_data.csv")
+neighborhood_data <- read_csv("/Users/anamariasteinercorrea/Documents/thesis/neighborhood_data.csv")
+msoa_geometry <- st_read("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data/MSOA_2011_London_gen_MHW.shp")
+```
 
+## Clean and join datasets
+
+```{r}
+# Perform the join of housing + neighborhood
+hn_data <- housing_data %>%
+  left_join(neighborhood_data, by = c("MSOA11NM", "MSOA11CD", "Year"))
+
+aggregated_hn <- hn_data %>%
+  group_by(MSOA11CD, MSOA11NM, Year) %>%  # Group by MSOA and Year
+  summarize(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")  # Average numeric columns
+```
+
+```{r}
+segregation_analysis <- aggregated_hn %>%
+  mutate(Year = as.character(Year)) %>%  # Convert Year to character in aggregated_hn
+  left_join(census_data_clean %>% mutate(Year = as.character(Year)),  # Convert Year in finalest_census_dt
+            by = c("MSOA11NM", "MSOA11CD", "Year"))  # Perform the join
+
+# Check the result
+print(segregation_analysis)
+```
+
+```{r}
+# Join with spatial data
+segregation_final <- segregation_analysis %>%
+  left_join(msoa_geometry %>% distinct(MSOA11CD, MSOA11NM, .keep_all = TRUE), 
+            by = c("MSOA11CD", "MSOA11NM"))
+
+# Convert to sf object
+segregation_sf <- st_as_sf(segregation_final)
+
+# Clean the dataset
+final_segregation <- segregation_sf %>%
+  # Select only the necessary columns and rename them
+  dplyr::select(
+    MSOA11CD,
+    MSOA11NM,
+    Year,
+    Rent,
+    Socialhousing = budget_proportion,
+    Owned,
+    Houseprice,
+    Overoccupation = Occupation,
+    geometry = geometry.y,
+    Crime = MSOA_crime,
+    Greenery = MSOA_percent_green,
+    PTAL,
+    Nationality,
+    Proportion,
+    D_Index,
+    Lagged_Dissimilarity,
+  ) 
+
+filtered_segregation <- final_segregation %>%
+  filter(MSOA11NM != "London")
+```
+
+## Correlations and Linear regressions
+
+### Correlation matrix for each nationality
+
+```{r}
+library(ggcorrplot)
+
+# Directory for correlation matrices
+dir.create("correlation_matrices", showWarnings = FALSE)
+
+# Loop through each nationality
+for (nationality in unique(filtered_segregation$Nationality)) {
+  # Filter data for the current nationality and drop geometry
+  nat_data <- filtered_segregation %>%
+    filter(Nationality == nationality) %>%
+    st_drop_geometry()  # Drop the geometry column
+  
+  # Subset relevant variables for correlation
+  correlation_data <- nat_data %>%
+    dplyr::select(
+      D_Index, Proportion, Rent, Socialhousing, Owned, Houseprice,
+      Overoccupation, Crime, Greenery, PTAL, Lagged_Dissimilarity
+    )
+  
+  # Remove rows with missing values
+  correlation_data <- correlation_data %>%
+    na.omit()
+  
+  # Convert all columns to numeric (if necessary)
+  correlation_data <- correlation_data %>%
+    mutate(across(everything(), as.numeric))
+  
+  # Check if enough variables remain for correlation
+  if (nrow(correlation_data) > 0 && ncol(correlation_data) > 1) {
+    # Compute the correlation matrix
+    corr_matrix <- cor(correlation_data, use = "complete.obs")
+    
+    # Visualize and save the correlation matrix
+    corr_plot <- ggcorrplot(corr_matrix, method = "circle",
+                            title = paste("Correlation Matrix for", nationality)) +
+      theme_minimal()
+    
+    ggsave(filename = paste0("correlation_matrices/correlation_matrix_", nationality, ".png"),
+           plot = corr_plot, width = 10, height = 6)
+  } else {
+    message(paste("Not enough valid data for correlation for nationality:", nationality))
+  }
+}
+```
+
+```{r}
+Variable	Direction	Strength	Description
+Proportion	Positive (Red)	Strong	Higher group proportion is associated with a higher Diss_Index.
+Rent	Positive (Red)	Moderate-Strong	Higher rental levels are correlated with higher Diss_Index.
+Socialhousing	Positive (Red)	Moderate	Greater social housing provision correlates with higher Diss_Index.
+Owned	Negative (Blue)	Moderate	Higher ownership rates are associated with lower Diss_Index.
+Houseprice	Negative (Blue)	Moderate	Higher house prices correlate with lower Diss_Index (less segregation).
+Overoccupation	Positive (Red)	Moderate	Higher overoccupation is associated with higher Diss_Index.
+Crime	Positive (Red)	Weak-Moderate	Higher crime levels are weakly correlated with higher Diss_Index.
+Greenery	Negative (Blue)	Weak	More greenery is weakly associated with lower Diss_Index.
+PTAL (Transport)	Negative (Blue)	Weak	Better public transport access relates weakly to lower Diss_Index.
+Lagged Variables	Mixed	Moderate	Some lagged variables (e.g., lagged_Rent, lagged_diss) show strong correlations.
+3. Key Insights
+Proportion:
+The strongest positive correlation with Diss_Index, suggesting that areas with higher proportions of a specific group also tend to have higher segregation.
+Housing Tenure:
+Rent and Socialhousing are positively correlated with segregation.
+Owned is negatively correlated, indicating that higher ownership rates are linked to lower levels of segregation.
+Economic Factors:
+Houseprice has a negative correlation, which suggests that higher house prices are linked to lower segregation, possibly due to barriers to access.
+Social Indicators:
+Overoccupation and Crime show positive correlations, indicating a potential association between socioeconomic stressors and higher segregation.
+Environment and Accessibility:
+Greenery and PTAL have weak negative correlations, meaning better access to greenery or public transport is slightly associated with lower segregation.
+Lagged Variables:
+Lagged versions of variables (e.g., lagged_Rent, lagged_diss) are significantly correlated, which suggests temporal persistence in relationships.
+4. Implications for Modeling:
+Multicollinearity Risk:
+The strong correlations between Diss_Index and several predictors (e.g., Proportion, Rent, lagged_diss) suggest multicollinearity issues when building a regression or GWR model.
+Use methods like VIF or regularization (Ridge/Lasso) to manage this.
+Variable Selection:
+Consider dropping or transforming highly correlated predictors (e.g., between Proportion and Diss_Index).
+Alternatively, Proportion could serve as a competing dependent variable.
+Potential Predictors:
+Variables such as Owned, Houseprice, Overoccupation, and Socialhousing can provide meaningful relationships with Diss_Index, as they show moderate correlations and distinct associations.
+```
+
+```{r}
+# Load required libraries
+library(dplyr)
+
+predictors <- filtered_segregation %>%
+  st_drop_geometry() %>%  
+  dplyr::select(Proportion, Rent, Socialhousing, Owned, Houseprice,
+      Overoccupation, Crime, Greenery, PTAL,
+      Lagged_Dissimilarity) %>% 
+  na.omit()  # Ensure no missing values
+
+# Function to calculate VIF manually
+calculate_vif <- function(data) {
+  vif_values <- sapply(names(data), function(var) {
+    # Create a formula regressing each variable on all others
+    formula <- as.formula(paste(var, "~ ."))
+    r_squared <- summary(lm(formula, data = data))$r.squared  # Get R²
+    vif <- 1 / (1 - r_squared)  # Calculate VIF
+    return(vif)
+  })
+  return(vif_values)
+}
+
+# Calculate VIF for predictors
+vif_results <- calculate_vif(predictors)
+
+# Print VIF results
+print(vif_results)
+```
+
+```{r}
+The latest VIF results indicate that all predictors fall within acceptable thresholds, with values ranging from 1.29 to 3.97, suggesting minimal multicollinearity. Variables such as Proportion (1.33), Socialhousing (1.29), Rent (1.54), and Houseprice (1.87) show no multicollinearity concerns, while Overoccupation (3.97) and lagged_diss (3.11) remain slightly higher but still well below problematic levels. These results confirm that the predictors can be included in the model without destabilizing the regression coefficients. Moving forward, I will continue to monitor VIF values when introducing new variables or adjustments to ensure multicollinearity remains within acceptable bounds, maintaining the robustness and interpretability of the analysis.
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)
+
+# Scaling all variables
+scaled_segregation <- filtered_segregation %>%
+  mutate(
+    # Housing variables
+    scaled_Rent = Rent / 1000,                  # Scale Rent (thousands to smaller range)
+    scaled_Socialhousing = Socialhousing / 100,              # Scale Budget (billions to smaller range)
+    scaled_Houseprice = Houseprice / 100000,   # Scale Houseprice (hundreds of thousands to smaller range)
+    scaled_Overoccupation = Overoccupation / 1000,     # Scale Occupation (hundreds to smaller range)
+    scaled_Owned = Owned,                      # Keep Owned unchanged (already 0-1)
+    # Neighborhood variables
+    scaled_Crime = Crime / 10,                 # Scale Crime (reduce magnitude for alignment)
+    scaled_Greenery = Greenery,                # Keep Greenery unchanged (already 0-1)
+    scaled_PTAL = PTAL                         # Keep PTAL unchanged (manageable range)
+  )
+```
+
+### Scatterplot for individual correlations
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(MASS)  # For robust regression
+
+# Ensure directories for outputs exist
+if (!dir.exists("scatterplots_fixed")) dir.create("scatterplots_fixed")
+if (!dir.exists("regression_outputs")) dir.create("regression_outputs")
+
+# Specify variables for scatterplots and regression
+y_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Owned", "scaled_Houseprice",
+            "scaled_Overoccupation", "scaled_Crime", "scaled_Greenery", "scaled_PTAL", "Lagged_Dissimilarity")
+
+# Loop through each nationality
+for (nationality in unique(scaled_segregation$Nationality)) {
+  # Filter data for the current nationality
+  nat_data <- scaled_segregation %>%
+    filter(Nationality == nationality) %>%
+    mutate(Dissimilarity_Index = as.numeric(D_Index))  # Ensure numeric
+  
+  # Create PDF for diagnostics
+  pdf(file = paste0("regression_outputs/Diagnostics_", nationality, ".pdf"))
+  
+  # Loop through each variable
+  for (y_var in y_vars) {
+    if (y_var %in% colnames(nat_data)) {  # Ensure variable exists
+      # Clean the data: remove NA and outliers
+      clean_data <- nat_data %>%
+        filter(
+          !is.na(Dissimilarity_Index), !is.na(!!sym(y_var)),
+          Dissimilarity_Index < quantile(D_Index, 0.99, na.rm = TRUE),
+          !!sym(y_var) < quantile(!!sym(y_var), 0.99, na.rm = TRUE)
+        )
+      
+      # Skip if not enough data
+      if (nrow(clean_data) < 5) {
+        warning(paste("Not enough data for regression for nationality:", nationality, "and predictor:", y_var))
+        next
+      }
+      
+      # Fit simple regression model (lm by default)
+      regression_formula <- paste("D_Index ~", y_var)
+      model <- lm(as.formula(regression_formula), data = clean_data)
+      
+      # Check diagnostics: Heteroscedasticity
+      diagnostics_problem <- function(model) {
+        res <- residuals(model)
+        fitted_vals <- fitted(model)
+        abs(cor(res^2, fitted_vals)) > 0.3  # Example threshold
+      }
+      
+      # Switch to robust regression if diagnostics indicate issues
+      if (diagnostics_problem(model)) {
+        message(paste("Switching to robust regression for:", nationality, "-", y_var))
+        model <- rlm(as.formula(regression_formula), data = clean_data)
+      }
+      
+      # Create diagnostics plots
+      par(mfrow = c(2, 2))  # 2x2 layout for diagnostics
+      plot(model, main = paste("Diagnostics for", nationality, "-", y_var))
+      
+      # Create scatterplot
+      scatter_plot <- ggplot(clean_data, aes(x = D_Index, y = !!sym(y_var))) +
+        geom_point(alpha = 0.5, color = "blue") +
+        geom_smooth(method = "lm", se = FALSE, color = "red") +
+        labs(
+          title = paste("Scatterplot for", nationality, "-", y_var),
+          x = "Dissimilarity Index",
+          y = y_var
+        ) +
+        theme_minimal() +
+        scale_y_continuous(expand = c(0.2, 0))
+      
+      # Save scatterplot
+      ggsave(
+        filename = paste0("scatterplots_fixed/scatterplot_", nationality, "_", y_var, ".png"),
+        plot = scatter_plot,
+        width = 10,
+        height = 6
+      )
+    }
+  }
+  
+  dev.off()  # Close PDF for diagnostics
+}
+```
+
+### CCFs for individual correlations
+
+```{r}
+library(dplyr)
+
+# Ensure a directory for CCF outputs
+if (!dir.exists("ccfs")) dir.create("ccfs")
+
+# List of variables to analyze against Dissimilarity_Index
+x_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_Overoccupation", "scaled_Owned")
+
+# Aggregate data over all MSOAs by year and nationality
+aggregated_data <- scaled_segregation %>%
+  group_by(Year, Nationality) %>%
+  summarize(
+    mean_diss = mean(D_Index, na.rm = TRUE),
+    across(all_of(x_vars), ~ mean(.x, na.rm = TRUE)),  # Aggregate housing variables
+    .groups = "drop"
+  ) %>%
+  na.omit()  # Remove rows with NA values after aggregation
+
+# Loop through each nationality
+for (nationality in unique(aggregated_data$Nationality)) {
+  # Filter data for the current nationality
+  nat_data <- aggregated_data %>%
+    filter(Nationality == nationality) %>%
+    arrange(Year)  # Ensure data is sorted by year
+  
+  # Check if sufficient data exists
+  if (nrow(nat_data) < 5) {  # Require at least 5 years of data for meaningful CCF
+    message(paste("Skipping Nationality:", nationality, "- Not enough data"))
+    next
+  }
+  
+  # Loop through each variable to compute CCF
+  for (x_var in x_vars) {
+    if (x_var %in% colnames(nat_data)) {  # Ensure variable exists
+      # Extract data for CCF
+      y_data <- nat_data$mean_diss
+      x_data <- nat_data[[x_var]]
+      
+      # Check if sufficient and valid data exists
+      if (var(y_data) > 0 && var(x_data) > 0) {
+        # Save CCF plot
+        png(filename = paste0("ccfs/ccf_London_", nationality, "_", x_var, ".png"), width = 800, height = 600)
+        ccf(
+          y_data, x_data,
+          lag.max = 10, plot = TRUE,
+          main = paste("CCF for London - Nationality:", nationality, "-", x_var)
+        )
+        dev.off()
+      } else {
+        message(paste("Skipping Nationality:", nationality, "Variable:", x_var, "- Insufficient or constant data"))
+      }
+    } else {
+      message(paste("Variable", x_var, "not found for Nationality:", nationality))
+    }
+  }
+}
+```
+
+### Linear regressions
+
+Base regressions (1-5 housing characteristics)
+Run separate regressions for each housing variable to assess their individual contributions to the segregation index.
+No. 6 Neighborhood data
+Add neighborhood-level variables to create a comprehensive model.
+No. 7 Lagged settlement model
+Incorporate the lagged settlement variable alongside all housing variables to capture temporal dependencies.
+
+```{r}
+# Load necessary libraries
+library(stargazer)  # For LaTeX/HTML-style regression tables
+library(dplyr)      # For data manipulation
+
+# Define variable groups
+housing_variables <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_Overoccupation", "scaled_Owned")
+neighborhood_variables <- c("scaled_Crime", "scaled_Greenery", "scaled_PTAL")
+all_variables <- c(housing_variables, "Lagged_Dissimilarity", neighborhood_variables)
+
+# Create directory for outputs
+output_dir <- "regression_outputs"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Loop through each nationality
+for (nationality in unique(scaled_segregation$Nationality)) {
+  # Filter data for the current nationality
+  nationality_data <- scaled_segregation %>%
+    filter(Nationality == nationality)
+  
+  # Skip if no data is available
+  if (nrow(nationality_data) == 0) {
+    warning(paste("No valid data for nationality:", nationality))
+    next
+  }
+
+  # Fit progressive models
+  models <- list(
+    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice, data = nationality_data),
+    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation, data = nationality_data),
+    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned, data = nationality_data),
+    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity, data = nationality_data),
+    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity + scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data)
+  )
+
+  # Generate HTML regression table
+  stargazer(
+    models,
+    type = "html",
+    out = paste0(output_dir, "/RegressionTable_", nationality, ".html"),
+    title = paste("Regression Results for", nationality),
+    dep.var.labels = "Dissimilarity Index",
+    covariate.labels = c(
+      "Rent", "Social Housing", "House Price", "Overoccupation",
+      "Owned", "Lagged Dissimilarity", "Crime", "Greenery", "PTAL"
+    ),
+    star.cutoffs = c(0.05, 0.01, 0.001),
+    digits = 3
+  )
+}
+```
+
+## GWR
+
+```{r}
+library(dplyr)
+library(sf)
+
+# Ensure Nationality is preserved in the aggregation step
+aggregated_data <- scaled_segregation %>%
+  group_by(MSOA11CD, MSOA11NM, geometry, Nationality) %>%  # Include Nationality
+  summarise(
+    scaled_Rent = mean(scaled_Rent, na.rm = TRUE),
+    scaled_Socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
+    scaled_Houseprice = mean(scaled_Houseprice, na.rm = TRUE),
+    scaled_Overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
+    scaled_Owned = mean(scaled_Owned, na.rm = TRUE),
+    Lagged_Dissimilarity = mean(Lagged_Dissimilarity, na.rm = TRUE),
+    scaled_Crime = mean(scaled_Crime, na.rm = TRUE),
+    scaled_Greenery = mean(scaled_Greenery, na.rm = TRUE),
+    scaled_PTAL = mean(scaled_PTAL, na.rm = TRUE),
+    D_Index = mean(D_Index, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Ensure the result is an sf object
+aggregated_data <- st_as_sf(aggregated_data)
+```
+
+```{r}
+# Install spatial regression libraries if needed
+library(sf)         # For handling spatial data
+library(spgwr)  
+```
+
+```{r}
+# Remove NaN rows from numeric fields
+aggregated_data <- aggregated_data %>%
+  filter(across(where(is.numeric), ~ !is.nan(.)))
+
+# Ensure Nationality is not missing
+aggregated_data <- aggregated_data %>%
+  filter(!is.na(Nationality))
+```
+
+```{r}
+# Ensure valid geometries and compute centroids
+aggregated_data <- aggregated_data %>%
+  st_make_valid() %>%
+  mutate(centroid = st_centroid(geometry))
+```
+
+```{r}
+library(sf)
+library(spgwr)
+
+# Ensure valid geometries and reproject to a projected CRS
+aggregated_data <- st_make_valid(aggregated_data)
+aggregated_data <- st_transform(aggregated_data, crs = 32630)
+
+# Get list of unique nationalities
+nationalities <- unique(aggregated_data$Nationality)
+
+# Initialize list to store results
+gwr_results_by_nationality <- list()
+
+# Loop through each nationality
+for (nat in nationalities) {
+  message(paste("Processing nationality:", nat))
+  
+  # Filter data for the specific nationality
+  data_subset <- aggregated_data %>% filter(Nationality == nat)
+  
+  # Ensure there are enough data points
+  if (nrow(data_subset) < 10) {
+    message(paste("Skipping nationality:", nat, "- insufficient data"))
+    next
+  }
+  
+  # Extract coordinates from centroids
+  coords <- st_coordinates(data_subset$centroid)
+  print(paste("Coordinates for", nat, ":", head(coords)))
+  
+  # Check coords validity
+  if (!is.matrix(coords) || ncol(coords) != 2 || !is.numeric(coords)) {
+    message(paste("Invalid coordinates for nationality:", nat))
+    next
+  }
+  
+  # Define GWR formula
+  gwr_formula <- D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + 
+                 scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity + 
+                 scaled_Crime + scaled_Greenery + scaled_PTAL
+  
+  # Select bandwidth or use default
+  bandwidth <- tryCatch({
+    gwr.sel(
+      formula = gwr_formula,
+      data = data_subset,
+      coords = coords,
+      adapt = TRUE
+    )
+  }, error = function(e) {
+    message(paste("Bandwidth selection failed for nationality:", nat, "Error:", e$message))
+    NA
+  })
+  
+  # Debugging bandwidth
+  print(paste("Bandwidth for", nat, ":", bandwidth))
+  
+  # Check bandwidth validity
+  if (is.na(bandwidth) || !is.numeric(bandwidth)) {
+    message(paste("Invalid bandwidth for nationality:", nat, "- using default value"))
+    bandwidth <- 0.1  # Default adaptive bandwidth
+  }
+  
+  # Run GWR
+  gwr_result <- tryCatch({
+    gwr(
+      formula = gwr_formula,
+      data = data_subset,
+      coords = coords,
+      bandwidth = bandwidth,
+      adapt = TRUE,
+      fit.points = coords
+    )
+  }, error = function(e) {
+    message(paste("GWR failed for nationality:", nat, "Error:", e$message))
+    NULL
+  })
+  
+  # Store results if valid
+  if (!is.null(gwr_result)) {
+    gwr_results_by_nationality[[nat]] <- gwr_result
+    message(paste("Completed GWR for nationality:", nat))
+  }
+}
+
+# Print summary of GWR results for each nationality
+for (nat in names(gwr_results_by_nationality)) {
+  if (!is.null(gwr_results_by_nationality[[nat]])) {
+    cat(paste("\nResults for Nationality:", nat, "\n"))
+    print(gwr_results_by_nationality[[nat]])
+  }
+}
+```
+
+```{r}
+library(ggplot2)
+library(sf)
+
+# Example: Visualize Rent coefficients for a specific nationality
+nat_to_visualize <- "Bangladesh"
+data_to_visualize <- gwr_results_by_nationality[[nat_to_visualize]]$SDF
+
+# Convert to sf object
+data_to_visualize_sf <- st_as_sf(data_to_visualize, coords = c("X", "Y"), crs = 32630)
+
+# Plot using ggplot2
+ggplot(data_to_visualize_sf) +
+  geom_sf(aes(fill = scaled_Rent), color = NA) +
+  scale_fill_viridis_c(option = "C", name = "Rent Coefficient") +
+  labs(
+    title = paste("GWR Coefficients for Rent -", nat_to_visualize),
+    subtitle = "Geographical variation in Rent coefficient",
+    caption = "Source: GWR Analysis"
+  ) +
+  theme_minimal()
+```
 
