@@ -1294,164 +1294,510 @@ for (nationality in unique(scaled_segregation$Nationality)) {
 library(dplyr)
 library(sf)
 
-# Ensure Nationality is preserved in the aggregation step
-aggregated_data <- scaled_segregation %>%
-  group_by(MSOA11CD, MSOA11NM, geometry, Nationality) %>%  # Include Nationality
-  summarise(
-    scaled_Rent = mean(scaled_Rent, na.rm = TRUE),
-    scaled_Socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
-    scaled_Houseprice = mean(scaled_Houseprice, na.rm = TRUE),
-    scaled_Overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
-    scaled_Owned = mean(scaled_Owned, na.rm = TRUE),
-    Lagged_Dissimilarity = mean(Lagged_Dissimilarity, na.rm = TRUE),
-    scaled_Crime = mean(scaled_Crime, na.rm = TRUE),
-    scaled_Greenery = mean(scaled_Greenery, na.rm = TRUE),
-    scaled_PTAL = mean(scaled_PTAL, na.rm = TRUE),
-    D_Index = mean(D_Index, na.rm = TRUE)
+# Convert dataset to sf object and set CRS (replace 27700 with your dataset's CRS if different)
+scaled_segregation_sf <- scaled_segregation %>%
+  st_as_sf(wkt = "geometry", crs = 27700)
+
+# Aggregate data for General GWR (20-Year Average)
+general_gwr_data <- scaled_segregation_sf %>%
+  group_by(MSOA11CD) %>%
+  summarize(
+    mean_diss = mean(D_Index, na.rm = TRUE),  # Average dissimilarity
+    mean_rent = mean(scaled_Rent, na.rm = TRUE),
+    mean_socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
+    mean_houseprice = mean(scaled_Houseprice, na.rm = TRUE),
+    mean_overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
+    mean_crime = mean(scaled_Crime, na.rm = TRUE),
+    mean_ptal = mean(scaled_PTAL, na.rm = TRUE),
+    mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
+    mean_owned = mean(scaled_Owned, na.rm = TRUE),
+    mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
+    geometry = first(geometry)  # Keep one geometry per MSOA
   ) %>%
-  ungroup()
+  st_as_sf()  # Ensure it remains an sf object
 
-# Ensure the result is an sf object
-aggregated_data <- st_as_sf(aggregated_data)
+# Convert geometries to centroids
+general_gwr_data_centroids <- general_gwr_data %>%
+  st_centroid()
+
+# Remove rows with NaN values in relevant columns
+general_gwr_data_clean <- general_gwr_data_centroids %>%
+  filter(complete.cases(mean_diss, mean_rent, mean_socialhousing, 
+                        mean_houseprice, mean_overoccupation, 
+                        mean_owned, mean_lagged_diss, mean_ptal, mean_greenery, mean_crime))
+
+# Check if geometries are valid
+library(sf)
+general_gwr_data_clean <- general_gwr_data_clean %>%
+  mutate(is_valid = st_is_valid(geometry)) %>%
+  filter(is_valid)  # Keep only valid geometries
+
+# Transform to a projected CRS if needed
+general_gwr_data_clean <- st_transform(general_gwr_data_clean, crs = 27700)
+
+# Convert to SpatialPointsDataFrame
+general_gwr_sp <- as(general_gwr_data_clean, "Spatial")
+
+# Define dependent and independent variables
+dependent_var <- "mean_diss"
+independent_vars <- c("mean_rent", "mean_socialhousing", "mean_houseprice", 
+                      "mean_overoccupation", "mean_owned", "mean_lagged_diss", "mean_crime", "mean_ptal", "mean_greenery")
+
+# Define GWR formula
+gwr_formula <- as.formula(
+  paste(dependent_var, "~", paste(independent_vars, collapse = " + "))
+)
+
+# Select bandwidth automatically
+bandwidth <- gwr.sel(gwr_formula, data = general_gwr_sp)
+
+# Run GWR
+gwr_results <- gwr(gwr_formula, data = general_gwr_sp, bandwidth = bandwidth, hatmatrix = TRUE)
+
+# Add GWR results back to sf object
+general_gwr_data_clean$gwr_fitted <- gwr_results$SDF$pred
+for (var in independent_vars) {
+  general_gwr_data_clean[[paste0("gwr_coeff_", var)]] <- gwr_results$SDF[[var]]
+}
+general_gwr_data_clean$local_r2 <- gwr_results$SDF$localR2
 ```
 
 ```{r}
-# Install spatial regression libraries if needed
-library(sf)         # For handling spatial data
-library(spgwr)  
+# Summarize coefficients
+summary(general_gwr_data_clean[, grep("gwr_coeff_", colnames(general_gwr_data_clean))])
 ```
 
 ```{r}
-# Remove NaN rows from numeric fields
-aggregated_data <- aggregated_data %>%
-  filter(across(where(is.numeric), ~ !is.nan(.)))
-
-# Ensure Nationality is not missing
-aggregated_data <- aggregated_data %>%
-  filter(!is.na(Nationality))
-```
-
-```{r}
-# Ensure valid geometries and compute centroids
-aggregated_data <- aggregated_data %>%
-  st_make_valid() %>%
-  mutate(centroid = st_centroid(geometry))
+str(general_gwr_data_clean)
 ```
 
 ```{r}
 library(sf)
-library(spgwr)
 
-# Ensure valid geometries and reproject to a projected CRS
-aggregated_data <- st_make_valid(aggregated_data)
-aggregated_data <- st_transform(aggregated_data, crs = 32630)
+# Check for invalid geometries
+sum(!st_is_valid(general_gwr_data_clean))  # Should return 0
+```
 
-# Get list of unique nationalities
-nationalities <- unique(aggregated_data$Nationality)
+```{r}
+# Drop the geometry column from general_gwr_data_clean
+general_gwr_data_clean_nonspatial <- general_gwr_data_clean %>%
+  st_drop_geometry()
 
-# Initialize list to store results
-gwr_results_by_nationality <- list()
-
-# Loop through each nationality
-for (nat in nationalities) {
-  message(paste("Processing nationality:", nat))
-  
-  # Filter data for the specific nationality
-  data_subset <- aggregated_data %>% filter(Nationality == nat)
-  
-  # Ensure there are enough data points
-  if (nrow(data_subset) < 10) {
-    message(paste("Skipping nationality:", nat, "- insufficient data"))
-    next
-  }
-  
-  # Extract coordinates from centroids
-  coords <- st_coordinates(data_subset$centroid)
-  print(paste("Coordinates for", nat, ":", head(coords)))
-  
-  # Check coords validity
-  if (!is.matrix(coords) || ncol(coords) != 2 || !is.numeric(coords)) {
-    message(paste("Invalid coordinates for nationality:", nat))
-    next
-  }
-  
-  # Define GWR formula
-  gwr_formula <- D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + 
-                 scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity + 
-                 scaled_Crime + scaled_Greenery + scaled_PTAL
-  
-  # Select bandwidth or use default
-  bandwidth <- tryCatch({
-    gwr.sel(
-      formula = gwr_formula,
-      data = data_subset,
-      coords = coords,
-      adapt = TRUE
-    )
-  }, error = function(e) {
-    message(paste("Bandwidth selection failed for nationality:", nat, "Error:", e$message))
-    NA
-  })
-  
-  # Debugging bandwidth
-  print(paste("Bandwidth for", nat, ":", bandwidth))
-  
-  # Check bandwidth validity
-  if (is.na(bandwidth) || !is.numeric(bandwidth)) {
-    message(paste("Invalid bandwidth for nationality:", nat, "- using default value"))
-    bandwidth <- 0.1  # Default adaptive bandwidth
-  }
-  
-  # Run GWR
-  gwr_result <- tryCatch({
-    gwr(
-      formula = gwr_formula,
-      data = data_subset,
-      coords = coords,
-      bandwidth = bandwidth,
-      adapt = TRUE,
-      fit.points = coords
-    )
-  }, error = function(e) {
-    message(paste("GWR failed for nationality:", nat, "Error:", e$message))
-    NULL
-  })
-  
-  # Store results if valid
-  if (!is.null(gwr_result)) {
-    gwr_results_by_nationality[[nat]] <- gwr_result
-    message(paste("Completed GWR for nationality:", nat))
-  }
-}
-
-# Print summary of GWR results for each nationality
-for (nat in names(gwr_results_by_nationality)) {
-  if (!is.null(gwr_results_by_nationality[[nat]])) {
-    cat(paste("\nResults for Nationality:", nat, "\n"))
-    print(gwr_results_by_nationality[[nat]])
-  }
-}
+# Perform a regular join using MSOA11CD
+merged_gwr <- msoa %>%
+  left_join(general_gwr_data_clean_nonspatial, by = "MSOA11CD")
 ```
 
 ```{r}
 library(ggplot2)
-library(sf)
 
-# Example: Visualize Rent coefficients for a specific nationality
-nat_to_visualize <- "Bangladesh"
-data_to_visualize <- gwr_results_by_nationality[[nat_to_visualize]]$SDF
+# Create a unique directory for coefficients
+if (!dir.exists("plots/coefficients")) dir.create("plots/coefficients", recursive = TRUE)
 
-# Convert to sf object
-data_to_visualize_sf <- st_as_sf(data_to_visualize, coords = c("X", "Y"), crs = 32630)
+# List of coefficients to plot
+coefficients <- c("gwr_coeff_mean_rent", "gwr_coeff_mean_socialhousing", 
+                  "gwr_coeff_mean_houseprice", "gwr_coeff_mean_overoccupation", 
+                  "gwr_coeff_mean_owned", "gwr_coeff_mean_lagged_diss", "gwr_coeff_mean_crime", "gwr_coeff_mean_ptal", "gwr_coeff_mean_greenery")
 
-# Plot using ggplot2
-ggplot(data_to_visualize_sf) +
-  geom_sf(aes(fill = scaled_Rent), color = NA) +
-  scale_fill_viridis_c(option = "C", name = "Rent Coefficient") +
+# Loop through each coefficient and create a map
+for (coeff in coefficients) {
+  plot <- ggplot(merged_gwr) +
+    geom_sf(aes_string(fill = coeff), color = NA) +
+    scale_fill_gradient2(
+      low = "blue", mid = "white", high = "red", midpoint = 0,
+      name = paste("GWR Coeff:", gsub("gwr_coeff_", "", coeff))
+    ) +
+    theme_minimal() +
+    labs(
+      title = paste("GWR Coefficient for", gsub("gwr_coeff_", "", coeff)),
+      caption = "Data aggregated at MSOA level"
+    )
+  
+  # Save the plot using ggsave
+  ggsave(
+    filename = paste0("plots/coefficients/GWR_Coeff_", gsub("gwr_coeff_", "", coeff), ".png"),
+    plot = plot, width = 10, height = 8
+  )
+}
+```
+
+```{r}
+# Create a unique directory for local R^2
+if (!dir.exists("plots/r2")) dir.create("plots/r2", recursive = TRUE)
+
+# Create the plot for local R^2
+r2_plot <- ggplot(merged_gwr) +
+  geom_sf(aes(fill = local_r2), color = NA) +
+  scale_fill_gradient(
+    low = "yellow", high = "green", name = "Local R^2"
+  ) +
+  theme_minimal() +
   labs(
-    title = paste("GWR Coefficients for Rent -", nat_to_visualize),
-    subtitle = "Geographical variation in Rent coefficient",
-    caption = "Source: GWR Analysis"
+    title = "GWR Local R^2 Map",
+    caption = "Data aggregated at MSOA level"
+  )
+
+# Save the Local R^2 plot
+ggsave(
+  filename = "plots/r2/GWR_Local_R2.png",
+  plot = r2_plot, width = 10, height = 8
+)
+```
+
+```{r}
+library(sf)
+library(dplyr)
+library(Matrix)
+library(FNN)
+
+# Ensure consistent CRS for geometries
+merged_gwr <- merged_gwr %>%
+  st_as_sf() %>%  # Ensure it is an sf object
+  st_transform(crs = 27700)  # Example: British National Grid
+
+# Prepare residuals or other variables for Moran's I analysis
+# Replace 'residuals' with the variable you wish to analyze (e.g., gwr_coeff_mean_rent)
+merged_gwr$residuals <- merged_gwr$gwr_fitted - merged_gwr$mean_diss  # Example residuals
+
+# Handle missing data in the chosen variable
+x <- merged_gwr$residuals
+x[is.na(x)] <- mean(x, na.rm = TRUE)  # Replace NA with mean value
+x_mean <- mean(x, na.rm = TRUE)
+
+# Recompute centroids and weights matrix for the dataset
+coords <- st_coordinates(st_centroid(st_geometry(merged_gwr)))
+knn <- get.knn(coords, k = 10)  # k nearest neighbors (k = 10)
+
+# Create a sparse weights matrix
+weights <- sparseMatrix(
+  i = rep(1:nrow(knn$nn.index), each = 10),
+  j = as.vector(knn$nn.index),
+  x = 1,
+  dims = c(nrow(coords), nrow(coords))
+)
+
+# Row-standardize the weights matrix
+row_sums <- rowSums(weights)
+row_standardized_weights <- weights / row_sums
+
+# Compute Local Moran's I manually
+local_moran <- numeric(length(x))
+for (i in seq_along(x)) {
+  neighbors <- which(row_standardized_weights[i, ] > 0)
+  lagged_value <- sum(row_standardized_weights[i, neighbors] * x[neighbors], na.rm = TRUE)
+  local_moran[i] <- (x[i] - x_mean) * (lagged_value - x_mean)
+}
+
+# Normalize Local Moran's I
+local_moran <- local_moran / var(x, na.rm = TRUE)
+
+# Add Local Moran's I results to merged_gwr
+merged_gwr <- merged_gwr %>%
+  mutate(Local_I = local_moran)
+
+# Save the results to the "plots" directory
+if (!dir.exists("plots")) dir.create("plots", recursive = TRUE)
+st_write(merged_gwr, "plots/GWR_Local_Moran_f.geojson", driver = "GeoJSON")
+
+# Print completion message
+print("Local Moran's I calculation completed. Results saved to plots/GWR_Local_Moran.geojson.")
+```
+
+```{r}
+library(ggplot2)
+
+# Create a residuals plot
+residuals_plot <- ggplot(merged_gwr) +
+  geom_sf(aes(fill = residuals), color = NA) +  # Use the residuals column for coloring
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red", midpoint = 0,
+    name = "Residuals"
+  ) +
+  labs(
+    title = "Residuals of GWR Model",
+    subtitle = "Visualization of Spatial Residuals",
+    caption = "Data aggregated at MSOA level"
   ) +
   theme_minimal()
+
+# Save the plot
+if (!dir.exists("plots")) dir.create("plots", recursive = TRUE)
+ggsave(
+  filename = "plots/GWR_Residuals.png",
+  plot = residuals_plot,
+  width = 10, height = 8
+)
+
+# Display the plot
+print(residuals_plot)
 ```
+
+```{r}
+library(dplyr)
+library(sf)
+library(ggplot2)
+
+# Ensure scaled_segregation_sf is an sf object
+scaled_segregation_sf <- scaled_segregation %>%
+  st_as_sf(wkt = "geometry", crs = 27700)
+
+# Create directory for nationality results
+if (!dir.exists("plots/nationalities")) dir.create("plots/nationalities", recursive = TRUE)
+
+# Get unique nationalities
+nationalities <- unique(scaled_segregation_sf$Nationality)
+
+# Loop through each nationality
+for (nat in nationalities) {
+  # Filter data for the current nationality
+  nat_data <- scaled_segregation_sf %>%
+    filter(Nationality == nat) %>%
+    group_by(MSOA11CD) %>%
+    summarize(
+      mean_diss = mean(D_Index, na.rm = TRUE),
+      mean_rent = mean(scaled_Rent, na.rm = TRUE),
+      mean_socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
+      mean_houseprice = mean(scaled_Houseprice, na.rm = TRUE),
+      mean_overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
+      mean_owned = mean(scaled_Owned, na.rm = TRUE),
+      mean_crime = mean(scaled_Crime, na.rm = TRUE),
+      mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
+      mean_ptal = mean(scaled_PTAL, na.rm = TRUE),
+      mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
+      geometry = first(geometry)
+    ) %>%
+    st_as_sf()
+
+  # Convert to centroids and remove invalid geometries
+  nat_data <- nat_data %>%
+    st_centroid() %>%
+    filter(complete.cases(mean_diss, mean_rent, mean_socialhousing, mean_houseprice,
+                          mean_overoccupation, mean_owned, mean_crime, mean_greenery, 
+                          mean_ptal, mean_lagged_diss)) %>%
+    mutate(is_valid = st_is_valid(geometry)) %>%
+    filter(is_valid)
+
+  # Convert to SpatialPointsDataFrame
+  nat_data_sp <- as(nat_data, "Spatial")
+
+  # Define GWR formula
+  dependent_var <- "mean_diss"
+  independent_vars <- c("mean_rent", "mean_socialhousing", "mean_houseprice", 
+                        "mean_overoccupation", "mean_owned", "mean_crime", 
+                        "mean_greenery", "mean_ptal", "mean_lagged_diss")
+  gwr_formula <- as.formula(paste(dependent_var, "~", paste(independent_vars, collapse = " + ")))
+
+  # Select bandwidth and run GWR
+  bandwidth <- gwr.sel(gwr_formula, data = nat_data_sp)
+  gwr_results <- gwr(gwr_formula, data = nat_data_sp, bandwidth = bandwidth, hatmatrix = TRUE)
+
+  # Add GWR results back to the sf object
+  nat_data$gwr_fitted <- gwr_results$SDF$pred
+  for (var in independent_vars) {
+    nat_data[[paste0("gwr_coeff_", var)]] <- gwr_results$SDF[[var]]
+  }
+  nat_data$local_r2 <- gwr_results$SDF$localR2
+
+  # Drop centroids to prepare for MSOA join
+  nat_data_nonspatial <- nat_data %>% st_drop_geometry()
+
+  # Join with MSOA polygons
+  merged_nationality <- msoa %>%
+    left_join(nat_data_nonspatial, by = "MSOA11CD")
+
+  # Plot coefficients
+  for (coeff in independent_vars) {
+    coeff_plot <- ggplot(merged_nationality) +
+      geom_sf(aes_string(fill = paste0("gwr_coeff_", coeff)), color = NA) +
+      scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+                           name = paste("GWR Coeff:", coeff)) +
+      theme_minimal() +
+      labs(
+        title = paste("GWR Coefficient for", coeff, "(", nat, ")"),
+        caption = "Data aggregated at MSOA level"
+      )
+    # Save plot
+    ggsave(
+      filename = paste0("plots/nationalities/GWR_Coeff_", coeff, "_", nat, ".png"),
+      plot = coeff_plot, width = 10, height = 8
+    )
+  }
+  print(paste("Completed GWR for nationality:", nat))
+}
+```
+
+```{r}
+# Create directory for year results
+if (!dir.exists("plots/years")) dir.create("plots/years", recursive = TRUE)
+
+# Specify the years of interest
+selected_years <- c(2001, 2005, 2011, 2015, 2021)
+
+# Loop through the selected years
+for (yr in selected_years) {
+  # Filter data for the current year
+  year_data <- scaled_segregation_sf %>%
+    filter(Year == yr) %>%
+    group_by(MSOA11CD) %>%
+    summarize(
+      mean_diss = mean(D_Index, na.rm = TRUE),
+      mean_rent = mean(scaled_Rent, na.rm = TRUE),
+      mean_socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
+      mean_houseprice = mean(scaled_Houseprice, na.rm = TRUE),
+      mean_overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
+      mean_owned = mean(scaled_Owned, na.rm = TRUE),
+      mean_crime = mean(scaled_Crime, na.rm = TRUE),
+      mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
+      mean_ptal = mean(scaled_PTAL, na.rm = TRUE),
+      mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
+      geometry = first(geometry)
+    ) %>%
+    st_as_sf()
+
+  # Convert to centroids and remove invalid geometries
+  year_data <- year_data %>%
+    st_centroid() %>%
+    filter(complete.cases(mean_diss, mean_rent, mean_socialhousing, mean_houseprice,
+                          mean_overoccupation, mean_owned, mean_crime, mean_greenery, 
+                          mean_ptal, mean_lagged_diss)) %>%
+    mutate(is_valid = st_is_valid(geometry)) %>%
+    filter(is_valid)
+
+  # Convert to SpatialPointsDataFrame
+  year_data_sp <- as(year_data, "Spatial")
+
+  # Define GWR formula
+  dependent_var <- "mean_diss"
+  independent_vars <- c("mean_rent", "mean_socialhousing", "mean_houseprice", 
+                        "mean_overoccupation", "mean_owned", "mean_crime", 
+                        "mean_greenery", "mean_ptal", "mean_lagged_diss")
+  gwr_formula <- as.formula(paste(dependent_var, "~", paste(independent_vars, collapse = " + ")))
+
+  # Select bandwidth and run GWR
+  bandwidth <- gwr.sel(gwr_formula, data = year_data_sp)
+  gwr_results <- gwr(gwr_formula, data = year_data_sp, bandwidth = bandwidth, hatmatrix = TRUE)
+
+  # Add GWR results back to the sf object
+  year_data$gwr_fitted <- gwr_results$SDF$pred
+  for (var in independent_vars) {
+    year_data[[paste0("gwr_coeff_", var)]] <- gwr_results$SDF[[var]]
+  }
+  year_data$local_r2 <- gwr_results$SDF$localR2
+
+  # Drop centroids to prepare for MSOA join
+  year_data_nonspatial <- year_data %>% st_drop_geometry()
+
+  # Join with MSOA polygons
+  merged_year <- msoa %>%
+    left_join(year_data_nonspatial, by = "MSOA11CD")
+
+  # Plot coefficients
+  for (coeff in independent_vars) {
+    coeff_plot <- ggplot(merged_year) +
+      geom_sf(aes_string(fill = paste0("gwr_coeff_", coeff)), color = NA) +
+      scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
+                           name = paste("GWR Coeff:", coeff)) +
+      theme_minimal() +
+      labs(
+        title = paste("GWR Coefficient for", coeff, "(", yr, ")"),
+        caption = "Data aggregated at MSOA level"
+      )
+    # Save plot
+    ggsave(
+      filename = paste0("plots/years/GWR_Coeff_", coeff, "_", yr, ".png"),
+      plot = coeff_plot, width = 10, height = 8
+    )
+  }
+  print(paste("Completed GWR for year:", yr))
+}
+```
+
+## EDA of housing variables
+
+```{r}
+library(ggplot2)
+
+# List of housing variables
+housing_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", 
+                  "scaled_Overoccupation", "scaled_Owned", "scaled_Crime", 
+                  "scaled_Greenery", "scaled_PTAL")
+
+# Add D_Index quantiles to the dataset
+scaled_segregation <- scaled_segregation %>%
+  mutate(D_Index_Quantile = ntile(D_Index, 4))
+
+# Create a directory for boxplots
+if (!dir.exists("plots/boxplots")) dir.create("plots/boxplots", recursive = TRUE)
+
+# Loop through each variable and generate a boxplot
+for (var in housing_vars) {
+  plot <- ggplot(scaled_segregation, aes(x = as.factor(D_Index_Quantile), y = .data[[var]])) +
+    geom_boxplot(fill = "lightblue") +
+    labs(title = paste(var, "Distribution Across Dissimilarity Quantiles"),
+         x = "Dissimilarity Index Quantile", y = var) +
+    theme_minimal()
+  
+  # Save the plot
+  ggsave(filename = paste0("plots/boxplots/", var, "_Boxplot.png"), plot = plot, width = 10, height = 8)
+  
+  print(paste("Boxplot for", var, "completed."))
+}
+```
+
+```{r}
+# Create a directory for trends over time
+if (!dir.exists("plots/trends")) dir.create("plots/trends", recursive = TRUE)
+
+# Loop through each variable and generate a temporal trend plot
+for (var in housing_vars) {
+  # Aggregate data by year for the current variable
+  yearly_data <- scaled_segregation %>%
+    group_by(Year) %>%
+    summarize(mean_value = mean(.data[[var]], na.rm = TRUE))
+  
+  # Generate line plot
+  plot <- ggplot(yearly_data, aes(x = Year, y = mean_value)) +
+    geom_line(color = "blue", size = 1) +
+    labs(title = paste("Temporal Trend of", var),
+         x = "Year", y = paste("Mean", var)) +
+    theme_minimal()
+  
+  # Save the plot
+  ggsave(filename = paste0("plots/trends/", var, "_Trend.png"), plot = plot, width = 10, height = 8)
+  
+  print(paste("Trend for", var, "completed."))
+}
+```
+
+```{r}
+library(sf)
+
+# Ensure dataset is an sf object
+scaled_segregation_sf <- st_as_sf(scaled_segregation, wkt = "geometry", crs = 27700)
+
+# Create a directory for spatial maps
+if (!dir.exists("plots/maps")) dir.create("plots/maps", recursive = TRUE)
+
+# Loop through each variable and generate a spatial map
+for (var in housing_vars) {
+  plot <- ggplot(scaled_segregation_sf) +
+    geom_sf(aes(fill = .data[[var]]), color = NA) +
+    scale_fill_gradient(low = "blue", high = "red", name = var) +
+    labs(title = paste("Spatial Distribution of", var)) +
+    theme_minimal()
+  
+  # Save the plot
+  ggsave(filename = paste0("plots/maps/", var, "_Map.png"), plot = plot, width = 10, height = 8)
+  
+  print(paste("Spatial map for", var, "completed."))
+}
+```
+
+
+
+
+
+
+
+
+
