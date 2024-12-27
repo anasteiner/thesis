@@ -1,6 +1,7 @@
-This document shows the code for the cleaning and joining of the demographic "census" data, and creation of its dataset. 
+This document shows the code for the cleaning and joining of the demographic "census" data, and creation of its dataset.
 
 ## Load necessary libraries
+
 ```{r}
 install.packages(c("readxl", "dplyr", "tidyr", "stats", "readr", "zoo", 
                    "ggplot2", "sf", "tmap", "sp", "spdep", "MASS", 
@@ -25,6 +26,7 @@ library(reshape2)
 ```
 
 ## Load census data
+
 ```{r}
 setwd("/Users/anamariasteinercorrea/Desktop/v3 longitudinal diaspora study/Data")
 
@@ -50,21 +52,22 @@ borough <- st_read(borough_path, quiet = FALSE)
 ## Clean and join all data
 
 ### Spatial data
+
 ```{r}
 # Eliminate columns
-msoa <- dplyr::select(msoa, -USUALRES, -HHOLDRES, -COMESTRES, -POPDEN, -HHOLDS, -AVHHOLDSZ, -LAD11NM, -RGN11NM, -LAD11CD, -RGN11CD)
+msoa <- dplyr::select(msoa, -USUALRES, -HHOLDRES, -COMESTRES, -POPDEN, -HHOLDS, -AVHHOLDSZ, -RGN11NM, -RGN11CD)
 
 # Eliminate columns
 lsoa <- dplyr::select(lsoa, -MSOA11CD, -MSOA11NM, -LAD11CD, -LAD11NM, -RGN11CD, -RGN11NM, -USUALRES, -HHOLDRES, -COMESTRES, -POPDEN, -HHOLDS, -AVHHOLDSZ)
 
 # Eliminate columns
 borough <- dplyr::select(borough, -HECTARES, -NONLD_AREA, -ONS_INNER, -SUB_2009, -SUB_2006)
-dff
 ```
 
 ### Demographic data
 
 ##### Census 2001
+
 ```{r}
 # Load necessary packages
 library(dplyr)
@@ -143,6 +146,7 @@ final_2001 <- final_2001 %>%
 ```
 
 ##### Census 2011
+
 ```{r}
 # Cleaning
 names(census_2011)[names(census_2011) == "geography"] <- "MSOA11NM"
@@ -272,6 +276,7 @@ final_2021 <- final_2021 %>%
 ```
 
 #### Create a complete census dataset
+
 ```{r}
 # Merge the datasets by MSOA codes and names
 combined_census <- final_2001 %>%
@@ -289,6 +294,7 @@ final_census <- final_census %>%
 ```
 
 #### Interpolate demogrpahic data set for non-census years
+
 ```{r}
 
 colnames(final_census)
@@ -322,6 +328,7 @@ data_long_odd_years <- data_long_interpolated %>%
   filter(Year %% 2 == 1)
 
 ```
+
 #### Join geometry to final dataset
 
 ```{r}
@@ -338,6 +345,7 @@ msoa_census <- left_join(msoa, data_long_odd_years, by = c("MSOA11NM", "MSOA11CD
 ```
 
 #### Interpolate demogrpahic data set for non-census years
+
 ```{r}
 # Calculate proportions of each nationality
 census_final <- msoa_census %>%
@@ -400,6 +408,7 @@ print(census_final_updated_dt)
 ```
 
 ### Theil's H index
+
 ```{r}
 # Ensure the dataset is a data.table
 census_final_updated_dt <- as.data.table(census_final_updated_dt)
@@ -421,6 +430,7 @@ census_final_updated_dt <- census_final_updated_dt[
 ```
 
 ### Isolation index
+
 ```{r}
 library(data.table)
 
@@ -521,6 +531,7 @@ for (var in c("Proportion", "D_Index", "Isolation_Index", "Theils_H")) {
 ```
 
 ### Visualice temporal line graphs of all indices
+
 ```{r}
 library(ggplot2)
 library(dplyr)
@@ -578,19 +589,20 @@ for (nationality in nationalities) {
 ```
 
 ### Visualice and compare temporal line graph between all nationalities
+
 ```{r}
 # Create line graph for Dissimilarity Index comparing all nationalities
 dissimilarity_plot <- ggplot(aggregated_data, aes(x = Year, y = D_Index, color = Nationality, group = Nationality)) +
   geom_line(size = 1.2) +
   geom_point(size = 2) +
   scale_y_continuous(
-    breaks = scales::pretty_breaks(n = 6), # Automatically generate breaks for better readability
-    labels = scales::label_number(accuracy = 0.01) # Format labels with two decimal places
+    breaks = scales::pretty_breaks(n = 6), # Automatically generate breaks for positions
+    labels = c(0.00, 0.15, 0.3, 0.45, 0.6, 0.75) # Manually specify custom labels
   ) +
   labs(
     title = "Dissimilarity Index Over Time (All Nationalities)",
     x = "Year",
-    y = "Dissimilarity Index", # Add clear y-axis label
+    y = "Dissimilarity Index", # Add a note for clarity
     color = "Nationality" # Legend title
   ) +
   theme_minimal() +
@@ -603,8 +615,10 @@ dissimilarity_plot <- ggplot(aggregated_data, aes(x = Year, y = D_Index, color =
 
 # Save the plot
 dir.create("line_graphs_comparison", showWarnings = FALSE)
-ggsave(filename = "line_graphs_comparison/Dissimilarity_Index_All_Nationalities.png",
-       plot = dissimilarity_plot, width = 10, height = 6)
+ggsave(
+  filename = "line_graphs_comparison/Dissimilarity_Index_All_Nationalities_Custom_Labels.png",
+  plot = dissimilarity_plot, width = 10, height = 6
+)
 ```
 
 ### Calculate spatial autocorrelation of diss index between nationalities
@@ -740,6 +754,7 @@ These regions might provide insights into successful policies for replication in
 ```
 
 ### Visualice maps of diss index between nationalities and through time
+
 ```{r}
 library(ggplot2)
 library(sf)
@@ -782,37 +797,53 @@ for (nationality in nationalities) {
 ### Identify MSOAs with Most Changes in Dissimilarity Index
 
 ```{r}
-# Calculate change in Diss_Index over time
-change_stats <- census_data_clean %>%
-  filter(!is.na(D_Index), !is.na(Nationality)) %>%  # Remove rows with NA Diss_Index or Nationality
-  group_by(MSOA11CD, Nationality) %>%
-  summarize(
-    Diss_Index_Change = max(D_Index) - min(D_Index),  # No need for na.rm as NA rows are excluded
-    .groups = "drop"
-  )
+# Calculate the top 3 boroughs (LAD) with most and least segregation
+top_boroughs <- census_data_clean %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarise(Average_Segregation = mean(D_Index, na.rm = TRUE)) %>%
+  arrange(desc(Average_Segregation)) %>%
+  dplyr::slice(1:3) # Top 3 most segregated
 
-# Top MSOAs where segregation DECREASED
-top_msoas_decreased <- change_stats %>%
-  filter(Diss_Index_Change < 0) %>%
-  arrange(Diss_Index_Change) %>%
-  group_by(Nationality) %>%
-  slice_head(n = 5)
+least_boroughs <- census_data_clean %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarise(Average_Segregation = mean(D_Index, na.rm = TRUE)) %>%
+  arrange(Average_Segregation) %>%
+  slice(1:3) # Top 3 least segregated
+```
 
-# View top MSOAs with decreased segregation
-print(top_msoas_decreased)
+```{r}
+south america - havering, bexley, bromley
+bangladesh - havering, bexley, bromley
+poland - havering, barking, redbridge 
+romania - bexley, bromley, sutton
+caribbean - sutton, kingston, barking
+se africa - sutton, kingston, barking
+```
 
-# Top MSOAs where segregation INCREASED
-top_msoas_increased <- change_stats %>%
-  filter(Diss_Index_Change > 0) %>%
-  arrange(desc(Diss_Index_Change)) %>%
-  group_by(Nationality) %>%
-  slice_head(n = 5)
+```{r}
+# Calculate the top 3 boroughs with the greatest increase/decrease in segregation
+segregation_change <- census_data_clean %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarise(Change = last(D_Index) - first(D_Index)) %>%
+  ungroup() %>% # Ungroup before slicing
+  arrange(desc(Change)) %>%
+  dplyr::slice(1:3) # Top 3 increases
 
-# View top MSOAs with increased segregation
-print(top_msoas_increased)
+segregation_decrease <- census_data_clean %>%
+  group_by(LAD11NM, Nationality) %>%
+  summarise(Change = last(D_Index) - first(D_Index)) %>%
+  ungroup() %>% # Ungroup before slicing
+  arrange(Change) %>%
+  dplyr::slice(1:3) # Top 3 decreases
+```
+
+```{r}
+4 msoas in croydon were the msoas with most significant increase in segregation
+4 msoas in redbridge were the msoas with most significant decrease (the decrease was much more prunounced than the increase)
 ```
 
 # Load all packages
+
 ```{r}
 library(tidyverse)
 library(sf)
@@ -892,6 +923,26 @@ filtered_segregation <- final_segregation %>%
 
 ## Correlations and Linear regressions
 
+```{r}
+# Load required libraries
+library(tidyverse)
+
+# Scaling all variables
+scaled_segregation <- filtered_segregation %>%
+  mutate(
+    # Housing variables
+    scaled_Rent = -1 * (Rent / 1000),                   # Rent scale
+    scaled_Socialhousing = Socialhousing / 100,        # Scale Socialhousing
+    scaled_Houseprice = -1 * (Houseprice / 100000),    # Houseprice scale
+    scaled_Overoccupation = Overoccupation / 1000,     # Scale Overoccupation
+    scaled_Owned = Owned,                              # Keep Owned unchanged
+    # Neighborhood variables
+    scaled_Crime = Crime / 10,                         # Scale Crime
+    scaled_Greenery = Greenery,                        # Keep Greenery unchanged
+    scaled_PTAL = PTAL  
+  )
+```
+
 ### Correlation matrix for each nationality
 
 ```{r}
@@ -901,17 +952,17 @@ library(ggcorrplot)
 dir.create("correlation_matrices", showWarnings = FALSE)
 
 # Loop through each nationality
-for (nationality in unique(filtered_segregation$Nationality)) {
+for (nationality in unique(scaled_segregation$Nationality)) {
   # Filter data for the current nationality and drop geometry
-  nat_data <- filtered_segregation %>%
+  nat_data <- scaled_segregation %>%
     filter(Nationality == nationality) %>%
     st_drop_geometry()  # Drop the geometry column
   
   # Subset relevant variables for correlation
   correlation_data <- nat_data %>%
     dplyr::select(
-      D_Index, Proportion, Rent, Socialhousing, Owned, Houseprice,
-      Overoccupation, Crime, Greenery, PTAL, Lagged_Dissimilarity
+      D_Index, scaled_Rent, scaled_Socialhousing, scaled_Owned, scaled_Houseprice,
+      scaled_Overoccupation, scaled_Crime, scaled_Greenery, scaled_PTAL, Lagged_Dissimilarity
     )
   
   # Remove rows with missing values
@@ -981,10 +1032,10 @@ Variables such as Owned, Houseprice, Overoccupation, and Socialhousing can provi
 # Load required libraries
 library(dplyr)
 
-predictors <- filtered_segregation %>%
+predictors <- scaled_segregation %>%
   st_drop_geometry() %>%  
-  dplyr::select(Proportion, Rent, Socialhousing, Owned, Houseprice,
-      Overoccupation, Crime, Greenery, PTAL,
+  dplyr::select(scaled_Rent, scaled_Socialhousing, scaled_Owned, scaled_Houseprice,
+      scaled_Overoccupation, scaled_Crime, scaled_Greenery, scaled_PTAL,
       Lagged_Dissimilarity) %>% 
   na.omit()  # Ensure no missing values
 
@@ -1009,26 +1060,6 @@ print(vif_results)
 
 ```{r}
 The latest VIF results indicate that all predictors fall within acceptable thresholds, with values ranging from 1.29 to 3.97, suggesting minimal multicollinearity. Variables such as Proportion (1.33), Socialhousing (1.29), Rent (1.54), and Houseprice (1.87) show no multicollinearity concerns, while Overoccupation (3.97) and lagged_diss (3.11) remain slightly higher but still well below problematic levels. These results confirm that the predictors can be included in the model without destabilizing the regression coefficients. Moving forward, I will continue to monitor VIF values when introducing new variables or adjustments to ensure multicollinearity remains within acceptable bounds, maintaining the robustness and interpretability of the analysis.
-```
-
-```{r}
-# Load required libraries
-library(tidyverse)
-
-# Scaling all variables
-scaled_segregation <- filtered_segregation %>%
-  mutate(
-    # Housing variables
-    scaled_Rent = Rent / 1000,                  # Scale Rent (thousands to smaller range)
-    scaled_Socialhousing = Socialhousing / 100,              # Scale Budget (billions to smaller range)
-    scaled_Houseprice = Houseprice / 100000,   # Scale Houseprice (hundreds of thousands to smaller range)
-    scaled_Overoccupation = Overoccupation / 1000,     # Scale Occupation (hundreds to smaller range)
-    scaled_Owned = Owned,                      # Keep Owned unchanged (already 0-1)
-    # Neighborhood variables
-    scaled_Crime = Crime / 10,                 # Scale Crime (reduce magnitude for alignment)
-    scaled_Greenery = Greenery,                # Keep Greenery unchanged (already 0-1)
-    scaled_PTAL = PTAL                         # Keep PTAL unchanged (manageable range)
-  )
 ```
 
 ### Scatterplot for individual correlations
@@ -1120,6 +1151,15 @@ for (nationality in unique(scaled_segregation$Nationality)) {
 }
 ```
 
+```{r}
+ggplot(scaled_segregation, aes(x = scaled_Rent, y = D_Index, color = factor(cut(scaled_Houseprice, breaks = 3)))) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(color = "House Price Level")
+
+```
+
+
 ### CCFs for individual correlations
 
 ```{r}
@@ -1135,11 +1175,16 @@ x_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_
 aggregated_data <- scaled_segregation %>%
   group_by(Year, Nationality) %>%
   summarize(
-    mean_diss = mean(D_Index, na.rm = TRUE),
+    mean_diss = mean(D_Index, na.rm = TRUE),  # Average Dissimilarity Index
     across(all_of(x_vars), ~ mean(.x, na.rm = TRUE)),  # Aggregate housing variables
     .groups = "drop"
   ) %>%
   na.omit()  # Remove rows with NA values after aggregation
+
+# Check if aggregation was successful
+if (nrow(aggregated_data) == 0) {
+  stop("No valid data after aggregation. Check input dataset.")
+}
 
 # Loop through each nationality
 for (nationality in unique(aggregated_data$Nationality)) {
@@ -1147,22 +1192,22 @@ for (nationality in unique(aggregated_data$Nationality)) {
   nat_data <- aggregated_data %>%
     filter(Nationality == nationality) %>%
     arrange(Year)  # Ensure data is sorted by year
-  
+
   # Check if sufficient data exists
   if (nrow(nat_data) < 5) {  # Require at least 5 years of data for meaningful CCF
     message(paste("Skipping Nationality:", nationality, "- Not enough data"))
     next
   }
-  
+
   # Loop through each variable to compute CCF
   for (x_var in x_vars) {
     if (x_var %in% colnames(nat_data)) {  # Ensure variable exists
       # Extract data for CCF
       y_data <- nat_data$mean_diss
       x_data <- nat_data[[x_var]]
-      
+
       # Check if sufficient and valid data exists
-      if (var(y_data) > 0 && var(x_data) > 0) {
+      if (var(y_data) > 0 && var(x_data) > 0) {  # Avoid constant or invalid data
         # Save CCF plot
         png(filename = paste0("ccfs/ccf_London_", nationality, "_", x_var, ".png"), width = 800, height = 600)
         ccf(
@@ -1183,12 +1228,7 @@ for (nationality in unique(aggregated_data$Nationality)) {
 
 ### Linear regressions
 
-Base regressions (1-5 housing characteristics)
-Run separate regressions for each housing variable to assess their individual contributions to the segregation index.
-No. 6 Neighborhood data
-Add neighborhood-level variables to create a comprehensive model.
-No. 7 Lagged settlement model
-Incorporate the lagged settlement variable alongside all housing variables to capture temporal dependencies.
+Base regressions (1-5 housing characteristics) Run separate regressions for each housing variable to assess their individual contributions to the segregation index. No. 6 Neighborhood data Add neighborhood-level variables to create a comprehensive model. No. 7 Lagged settlement model Incorporate the lagged settlement variable alongside all housing variables to capture temporal dependencies.
 
 ```{r}
 # Load necessary libraries
@@ -1215,29 +1255,35 @@ for (nationality in unique(scaled_segregation$Nationality)) {
     warning(paste("No valid data for nationality:", nationality))
     next
   }
-
-  # Fit progressive models
+  
+  # Fit original progressive models
   models <- list(
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice, data = nationality_data),
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation, data = nationality_data),
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned, data = nationality_data),
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity, data = nationality_data),
-    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity + scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data)
+    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity +
+         scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data),
+    # Include Rent × House Price interaction
+    lm(D_Index ~ scaled_Rent * scaled_Houseprice + scaled_Socialhousing + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity +
+         scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data)
   )
-
+  
   # Generate HTML regression table
   stargazer(
     models,
     type = "html",
     out = paste0(output_dir, "/RegressionTable_", nationality, ".html"),
-    title = paste("Regression Results for", nationality),
+    title = paste("Regression Results for", nationality, "(Including Rent × House Price Interaction)"),
     dep.var.labels = "Dissimilarity Index",
     covariate.labels = c(
-      "Rent", "Social Housing", "House Price", "Overoccupation",
-      "Owned", "Lagged Dissimilarity", "Crime", "Greenery", "PTAL"
+      "Rent", "Social Housing", "House Price", "Overoccupation", "Owned", "Lagged Dissimilarity",
+      "Crime", "Greenery", "PTAL", "Rent × House Price"
     ),
     star.cutoffs = c(0.05, 0.01, 0.001),
-    digits = 3
+    digits = 3,
+    coef = lapply(all_models, function(model) { coef(model) * 10 }),  # Scale coefficients
+    se = lapply(all_models, function(model) { summary(model)$coefficients[, "Std. Error"] * 10 })  # Scale standard errors
   )
 }
 ```
@@ -1409,4 +1455,3 @@ ggplot(data_to_visualize_sf) +
   ) +
   theme_minimal()
 ```
-
