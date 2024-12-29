@@ -1074,7 +1074,7 @@ if (!dir.exists("scatterplots_fixed")) dir.create("scatterplots_fixed")
 if (!dir.exists("regression_outputs")) dir.create("regression_outputs")
 
 # Specify variables for scatterplots and regression
-y_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Owned", "scaled_Houseprice",
+x_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Owned", "scaled_Houseprice",
             "scaled_Overoccupation", "scaled_Crime", "scaled_Greenery", "scaled_PTAL", "Lagged_Dissimilarity")
 
 # Loop through each nationality
@@ -1088,24 +1088,24 @@ for (nationality in unique(scaled_segregation$Nationality)) {
   pdf(file = paste0("regression_outputs/Diagnostics_", nationality, ".pdf"))
   
   # Loop through each variable
-  for (y_var in y_vars) {
-    if (y_var %in% colnames(nat_data)) {  # Ensure variable exists
+  for (x_var in x_vars) {
+    if (x_var %in% colnames(nat_data)) {  # Ensure variable exists
       # Clean the data: remove NA and outliers
       clean_data <- nat_data %>%
         filter(
-          !is.na(Dissimilarity_Index), !is.na(!!sym(y_var)),
+          !is.na(Dissimilarity_Index), !is.na(!!sym(x_var)),
           Dissimilarity_Index < quantile(D_Index, 0.99, na.rm = TRUE),
-          !!sym(y_var) < quantile(!!sym(y_var), 0.99, na.rm = TRUE)
+          !!sym(x_var) < quantile(!!sym(x_var), 0.99, na.rm = TRUE)
         )
       
       # Skip if not enough data
       if (nrow(clean_data) < 5) {
-        warning(paste("Not enough data for regression for nationality:", nationality, "and predictor:", y_var))
+        warning(paste("Not enough data for regression for nationality:", nationality, "and predictor:", x_var))
         next
       }
       
       # Fit simple regression model (lm by default)
-      regression_formula <- paste("D_Index ~", y_var)
+      regression_formula <- paste("D_Index ~", x_var)
       model <- lm(as.formula(regression_formula), data = clean_data)
       
       # Check diagnostics: Heteroscedasticity
@@ -1117,29 +1117,29 @@ for (nationality in unique(scaled_segregation$Nationality)) {
       
       # Switch to robust regression if diagnostics indicate issues
       if (diagnostics_problem(model)) {
-        message(paste("Switching to robust regression for:", nationality, "-", y_var))
+        message(paste("Switching to robust regression for:", nationality, "-", x_var))
         model <- rlm(as.formula(regression_formula), data = clean_data)
       }
       
       # Create diagnostics plots
       par(mfrow = c(2, 2))  # 2x2 layout for diagnostics
-      plot(model, main = paste("Diagnostics for", nationality, "-", y_var))
+      plot(model, main = paste("Diagnostics for", nationality, "-", x_var))
       
       # Create scatterplot
-      scatter_plot <- ggplot(clean_data, aes(x = D_Index, y = !!sym(y_var))) +
+      scatter_plot <- ggplot(clean_data, aes(y = D_Index, x = !!sym(x_var))) +
         geom_point(alpha = 0.5, color = "blue") +
         geom_smooth(method = "lm", se = FALSE, color = "red") +
         labs(
-          title = paste("Scatterplot for", nationality, "-", y_var),
-          x = "Dissimilarity Index",
-          y = y_var
+          title = paste("Scatterplot for", nationality, "-", x_var),
+          x = x_var,
+          y = "Dissimilarity Index"
         ) +
         theme_minimal() +
         scale_y_continuous(expand = c(0.2, 0))
       
       # Save scatterplot
       ggsave(
-        filename = paste0("scatterplots_fixed/scatterplot_", nationality, "_", y_var, ".png"),
+        filename = paste0("scatterplots_fixed/scatterplot_", nationality, "_", x_var, ".png"),
         plot = scatter_plot,
         width = 10,
         height = 6
@@ -1171,15 +1171,28 @@ if (!dir.exists("ccfs")) dir.create("ccfs")
 # List of variables to analyze against Dissimilarity_Index
 x_vars <- c("scaled_Rent", "scaled_Socialhousing", "scaled_Houseprice", "scaled_Overoccupation", "scaled_Owned")
 
-# Aggregate data over all MSOAs by year and nationality
-aggregated_data <- scaled_segregation %>%
-  group_by(Year, Nationality) %>%
-  summarize(
-    mean_diss = mean(D_Index, na.rm = TRUE),  # Average Dissimilarity Index
-    across(all_of(x_vars), ~ mean(.x, na.rm = TRUE)),  # Aggregate housing variables
-    .groups = "drop"
+# Ensure all relevant variables are numeric and drop geometry in the process
+aggregated_ccf <- scaled_segregation %>%
+  st_drop_geometry() %>%  # Drop geometry to handle numeric-only processing
+  mutate(
+    scaled_Rent = as.numeric(scaled_Rent),
+    scaled_Socialhousing = as.numeric(scaled_Socialhousing),
+    scaled_Houseprice = as.numeric(scaled_Houseprice),
+    scaled_Overoccupation = as.numeric(scaled_Overoccupation),
+    scaled_Owned = as.numeric(scaled_Owned)
   ) %>%
-  na.omit()  # Remove rows with NA values after aggregation
+  group_by(Year, Nationality) %>%  # Group by Year and Nationality
+  summarize(
+    mean_diss = mean(D_Index, na.rm = TRUE),  # Aggregate dissimilarity index
+    across(
+      c(scaled_Rent, scaled_Socialhousing, scaled_Houseprice, scaled_Overoccupation, scaled_Owned),
+      ~ mean(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+# Check the structure to confirm numeric conversion
+str(aggregated_ccf)
 
 # Check if aggregation was successful
 if (nrow(aggregated_data) == 0) {
@@ -1262,12 +1275,8 @@ for (nationality in unique(scaled_segregation$Nationality)) {
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation, data = nationality_data),
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned, data = nationality_data),
     lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity, data = nationality_data),
-    lm(D_Index ~ scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity +
-         scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data),
-    # Include Rent × House Price interaction
-    lm(D_Index ~ scaled_Rent * scaled_Houseprice + scaled_Socialhousing + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity +
-         scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data)
-  )
+    lm(D_Index ~ scaled_Rent * scaled_Houseprice + scaled_Rent + scaled_Socialhousing + scaled_Houseprice + scaled_Overoccupation + scaled_Owned + Lagged_Dissimilarity +
+         scaled_Crime + scaled_Greenery + scaled_PTAL, data = nationality_data))
   
   # Generate HTML regression table
   stargazer(
@@ -1745,21 +1754,46 @@ for (var in housing_vars) {
 ```
 
 ```{r}
-# Create a directory for trends over time
+library(ggplot2)
+library(dplyr)
+
+# List of housing variables to analyze
+housing_vars <- c("Rent", "Socialhousing", "Owned", "Houseprice", "Overoccupation")
+
+# Create a directory for saving trend plots
 if (!dir.exists("plots/trends")) dir.create("plots/trends", recursive = TRUE)
+
+# Drop geometry for aggregation
+filtered_segregation_no_geom <- filtered_segregation %>%
+  st_drop_geometry()
+
+# Ensure the Year column is numeric
+filtered_segregation_no_geom <- filtered_segregation_no_geom %>%
+  mutate(Year = as.numeric(Year))
+
+# Filter for odd years between 2001 and 2021
+filtered_segregation_no_geom <- filtered_segregation_no_geom %>%
+  filter(Year %% 2 == 1 & Year >= 2001 & Year <= 2021)
 
 # Loop through each variable and generate a temporal trend plot
 for (var in housing_vars) {
   # Aggregate data by year for the current variable
-  yearly_data <- scaled_segregation %>%
+  yearly_data <- filtered_segregation_no_geom %>%
     group_by(Year) %>%
-    summarize(mean_value = mean(.data[[var]], na.rm = TRUE))
+    summarize(
+      mean_value = mean(.data[[var]], na.rm = TRUE), # Average across all MSOAs for each year
+      .groups = "drop"
+    )
   
   # Generate line plot
   plot <- ggplot(yearly_data, aes(x = Year, y = mean_value)) +
     geom_line(color = "blue", size = 1) +
-    labs(title = paste("Temporal Trend of", var),
-         x = "Year", y = paste("Mean", var)) +
+    geom_point(color = "red", size = 2) +
+    labs(
+      title = paste("Temporal Trend of", var),
+      x = "Year",
+      y = paste("Average", var, "(across all MSOAs)")
+    ) +
     theme_minimal()
   
   # Save the plot
@@ -1773,14 +1807,14 @@ for (var in housing_vars) {
 library(sf)
 
 # Ensure dataset is an sf object
-scaled_segregation_sf <- st_as_sf(scaled_segregation, wkt = "geometry", crs = 27700)
+filtered_segregation_sf <- st_as_sf(filtered_segregation, wkt = "geometry", crs = 27700)
 
 # Create a directory for spatial maps
 if (!dir.exists("plots/maps")) dir.create("plots/maps", recursive = TRUE)
 
 # Loop through each variable and generate a spatial map
 for (var in housing_vars) {
-  plot <- ggplot(scaled_segregation_sf) +
+  plot <- ggplot(filtered_segregation_sf) +
     geom_sf(aes(fill = .data[[var]]), color = NA) +
     scale_fill_gradient(low = "blue", high = "red", name = var) +
     labs(title = paste("Spatial Distribution of", var)) +

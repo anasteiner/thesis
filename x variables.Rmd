@@ -541,7 +541,7 @@ rents_long <- finals_rents%>%
 
 # Select required columns
 rents_long <- rents_long %>%
-  select(MSOA11CD, MSOA11NM, geometry, Year, Rent)
+  dplyr::select(MSOA11CD, MSOA11NM, geometry, Year, Rent)
 
 # Ensure all_years contains only odd years and is of integer type
 all_years <- seq(2001, 2021, by = 2)  # Generate odd years
