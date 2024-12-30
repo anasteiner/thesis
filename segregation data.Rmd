@@ -1320,7 +1320,7 @@ for (nationality in unique(scaled_segregation$Nationality)) {
 library(dplyr)
 library(sf)
 
-# Convert dataset to sf object and set CRS 
+# Convert dataset to sf object and set CRS
 scaled_segregation_sf <- scaled_segregation %>%
   st_as_sf(wkt = "geometry", crs = 27700)
 
@@ -1338,9 +1338,9 @@ general_gwr_data <- scaled_segregation_sf %>%
     mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
     mean_owned = mean(scaled_Owned, na.rm = TRUE),
     mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
-    geometry = first(geometry)  
+    geometry = st_union(geometry) # Use st_union for geometry aggregation
   ) %>%
-  st_as_sf()  
+  st_as_sf()
 
 # Convert geometries to centroids
 general_gwr_data_centroids <- general_gwr_data %>%
@@ -1374,6 +1374,7 @@ gwr_formula <- as.formula(
   paste(dependent_var, "~", paste(independent_vars, collapse = " + "))
 )
 
+library(spgwr)
 # Select bandwidth automatically
 bandwidth <- gwr.sel(gwr_formula, data = general_gwr_sp)
 
@@ -1558,7 +1559,9 @@ ggsave(
 library(dplyr)
 library(sf)
 library(ggplot2)
+library(spgwr)
 
+# Convert scaled_segregation to sf object
 scaled_segregation_sf <- scaled_segregation %>%
   st_as_sf(wkt = "geometry", crs = 27700)
 
@@ -1571,29 +1574,29 @@ nationalities <- unique(scaled_segregation_sf$Nationality)
 # Loop through each nationality
 for (nat in nationalities) {
   # Filter data for the current nationality
-  nat_data <- scaled_segregation_sf %>%
-    filter(Nationality == nat) %>%
-    group_by(MSOA11CD) %>%
-    summarize(
-      mean_diss = mean(D_Index, na.rm = TRUE),
-      mean_rent = mean(scaled_Rent, na.rm = TRUE),
-      mean_socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
-      mean_houseprice = mean(scaled_Houseprice, na.rm = TRUE),
-      mean_overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
-      mean_owned = mean(scaled_Owned, na.rm = TRUE),
-      mean_crime = mean(scaled_Crime, na.rm = TRUE),
-      mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
-      mean_ptal = mean(scaled_PTAL, na.rm = TRUE),
-      mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
-      geometry = first(geometry)
-    ) %>%
-    st_as_sf()
+nat_data <- scaled_segregation_sf %>%
+  filter(Nationality == nat) %>%
+  group_by(MSOA11CD) %>%
+  summarize(
+    mean_diss = mean(D_Index, na.rm = TRUE),
+    mean_rent = mean(scaled_Rent, na.rm = TRUE),
+    mean_socialhousing = mean(scaled_Socialhousing, na.rm = TRUE),
+    mean_houseprice = mean(scaled_Houseprice, na.rm = TRUE),
+    mean_overoccupation = mean(scaled_Overoccupation, na.rm = TRUE),
+    mean_owned = mean(scaled_Owned, na.rm = TRUE),
+    mean_crime = mean(scaled_Crime, na.rm = TRUE),
+    mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
+    mean_ptal = mean(scaled_PTAL, na.rm = TRUE),
+    mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
+    geometry = st_union(geometry) # Fix: aggregate geometries for groups
+  ) %>%
+  st_as_sf()
 
   # Convert to centroids and remove invalid geometries
   nat_data <- nat_data %>%
     st_centroid() %>%
     filter(complete.cases(mean_diss, mean_rent, mean_socialhousing, mean_houseprice,
-                          mean_overoccupation, mean_owned, mean_crime, mean_greenery, 
+                          mean_overoccupation, mean_owned, mean_crime, mean_greenery,
                           mean_ptal, mean_lagged_diss)) %>%
     mutate(is_valid = st_is_valid(geometry)) %>%
     filter(is_valid)
@@ -1603,8 +1606,8 @@ for (nat in nationalities) {
 
   # Define GWR formula
   dependent_var <- "mean_diss"
-  independent_vars <- c("mean_rent", "mean_socialhousing", "mean_houseprice", 
-                        "mean_overoccupation", "mean_owned", "mean_crime", 
+  independent_vars <- c("mean_rent", "mean_socialhousing", "mean_houseprice",
+                        "mean_overoccupation", "mean_owned", "mean_crime",
                         "mean_greenery", "mean_ptal", "mean_lagged_diss")
   gwr_formula <- as.formula(paste(dependent_var, "~", paste(independent_vars, collapse = " + ")))
 
@@ -1626,27 +1629,32 @@ for (nat in nationalities) {
   merged_nationality <- msoa %>%
     left_join(nat_data_nonspatial, by = "MSOA11CD")
 
-  # Plot coefficients
+  # Plot coefficients with borough layer
   for (coeff in independent_vars) {
     coeff_plot <- ggplot(merged_nationality) +
+      # Plot GWR coefficients
       geom_sf(aes_string(fill = paste0("gwr_coeff_", coeff)), color = NA) +
       scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
                            name = paste("GWR Coeff:", coeff)) +
+      # Add borough boundaries
+      geom_sf(data = borough, fill = NA, color = "black", size = 0.3) +
+      # Add borough names
+      geom_sf_text(data = borough, aes(label = NAME), size = 3, color = "black") +
       theme_minimal() +
       labs(
         title = paste("GWR Coefficient for", coeff, "(", nat, ")"),
         caption = "Data aggregated at MSOA level"
       )
+    
     # Save plot
     ggsave(
       filename = paste0("plots/nationalities/GWR_Coeff_", coeff, "_", nat, ".png"),
       plot = coeff_plot, width = 10, height = 8
     )
   }
-  print(paste("Completed GWR for nationality:", nat))
 }
 ```
-
+## Anual GWR
 ```{r}
 # Create directory for year results
 if (!dir.exists("plots/years")) dir.create("plots/years", recursive = TRUE)
@@ -1671,7 +1679,7 @@ for (yr in selected_years) {
       mean_greenery = mean(scaled_Greenery, na.rm = TRUE),
       mean_ptal = mean(scaled_PTAL, na.rm = TRUE),
       mean_lagged_diss = mean(Lagged_Dissimilarity, na.rm = TRUE),
-      geometry = first(geometry)
+      geometry = st_union(geometry) # Fix for spatial summarization
     ) %>%
     st_as_sf()
 
@@ -1712,12 +1720,17 @@ for (yr in selected_years) {
   merged_year <- msoa %>%
     left_join(year_data_nonspatial, by = "MSOA11CD")
 
-  # Plot coefficients
+  # Plot coefficients with borough overlay
   for (coeff in independent_vars) {
     coeff_plot <- ggplot(merged_year) +
+      # Plot GWR coefficients
       geom_sf(aes_string(fill = paste0("gwr_coeff_", coeff)), color = NA) +
       scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
                            name = paste("GWR Coeff:", coeff)) +
+      # Add borough boundaries
+      geom_sf(data = borough, fill = NA, color = "black", size = 0.3) +
+      # Add borough names
+      geom_sf_text(data = borough, aes(label = NAME), size = 3, color = "black") +
       theme_minimal() +
       labs(
         title = paste("GWR Coefficient for", coeff, "(", yr, ")"),
@@ -1796,6 +1809,12 @@ for (var in housing_vars) {
       mean_value = mean(.data[[var]], na.rm = TRUE), # Average across all MSOAs for each year
       .groups = "drop"
     )
+  
+  # Reverse the trend for "Rent" by flipping the changes
+  if (var == "Rent") {
+    yearly_data <- yearly_data %>%
+      mutate(mean_value = max(mean_value) - (mean_value - min(mean_value))) # Invert the pattern
+  }
   
   # Generate line plot
   plot <- ggplot(yearly_data, aes(x = Year, y = mean_value)) +
