@@ -1422,22 +1422,40 @@ library(ggplot2)
 if (!dir.exists("plots/coefficients")) dir.create("plots/coefficients", recursive = TRUE)
 
 # List of coefficients to plot
-coefficients <- c("gwr_coeff_mean_rent", "gwr_coeff_mean_socialhousing", 
-                  "gwr_coeff_mean_houseprice", "gwr_coeff_mean_overoccupation", 
-                  "gwr_coeff_mean_owned", "gwr_coeff_mean_lagged_diss", "gwr_coeff_mean_crime", "gwr_coeff_mean_ptal", "gwr_coeff_mean_greenery")
+coefficients <- c("gwr_coeff_mean_rent", "gwr_coeff_mean_socialhousing",
+                  "gwr_coeff_mean_houseprice", "gwr_coeff_mean_overoccupation",
+                  "gwr_coeff_mean_owned", "gwr_coeff_mean_lagged_diss", 
+                  "gwr_coeff_mean_crime", "gwr_coeff_mean_ptal", 
+                  "gwr_coeff_mean_greenery")
+
+# Define a custom color palette and breakpoints
+custom_palette <- c("blue", "lightblue", "white", "pink", "red")
+breakpoints <- c(-1, -0.1, 0, 0.1, 1) # Adjust these based on your coefficient range
 
 # Loop through each coefficient and create a map
 for (coeff in coefficients) {
   plot <- ggplot(merged_gwr) +
+    # Add coefficient fill
     geom_sf(aes_string(fill = coeff), color = NA) +
-    scale_fill_gradient2(
-      low = "blue", mid = "white", high = "red", midpoint = 0,
+    # Add borough boundaries
+    geom_sf(data = borough, fill = NA, color = "black", size = 0.3) +
+    # Add borough names
+    geom_sf_text(data = borough, aes(label = NAME), size = 3, color = "black") +
+    # Customize color scale
+    scale_fill_gradientn(
+      colors = custom_palette,
+      values = scales::rescale(breakpoints), # Rescale breakpoints to [0, 1]
       name = paste("GWR Coeff:", gsub("gwr_coeff_", "", coeff))
     ) +
+    # Customize theme and labels
     theme_minimal() +
     labs(
       title = paste("GWR Coefficient for", gsub("gwr_coeff_", "", coeff)),
       caption = "Data aggregated at MSOA level"
+    ) +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
     )
   
   # Save the plot using ggsave
@@ -1662,7 +1680,13 @@ if (!dir.exists("plots/years")) dir.create("plots/years", recursive = TRUE)
 # Specify the years of interest
 selected_years <- c(2001, 2005, 2011, 2015, 2021)
 
-# Loop through the selected years
+# Define a custom color palette
+custom_palette <- c("blue", "lightblue", "white", "pink", "red")
+
+# Initialize a list to store global min and max for each coefficient
+global_coeff_ranges <- list()
+
+# Pre-compute global coefficient ranges
 for (yr in selected_years) {
   # Filter data for the current year
   year_data <- scaled_segregation_sf %>%
@@ -1706,6 +1730,25 @@ for (yr in selected_years) {
   bandwidth <- gwr.sel(gwr_formula, data = year_data_sp)
   gwr_results <- gwr(gwr_formula, data = year_data_sp, bandwidth = bandwidth, hatmatrix = TRUE)
 
+  # Update global ranges for each coefficient
+  for (var in independent_vars) {
+    coeff_values <- gwr_results$SDF[[var]]
+    if (!is.null(coeff_values)) {
+      current_range <- range(coeff_values, na.rm = TRUE)
+      if (!var %in% names(global_coeff_ranges)) {
+        global_coeff_ranges[[var]] <- current_range
+      } else {
+        global_coeff_ranges[[var]] <- range(global_coeff_ranges[[var]], current_range)
+      }
+    }
+  }
+}
+
+# Loop through the selected years to plot
+for (yr in selected_years) {
+  # Repeat year-specific data preparation (as above)...
+  # Same data preparation as above
+  
   # Add GWR results back to the sf object
   year_data$gwr_fitted <- gwr_results$SDF$pred
   for (var in independent_vars) {
@@ -1722,14 +1765,16 @@ for (yr in selected_years) {
 
   # Plot coefficients with borough overlay
   for (coeff in independent_vars) {
+    coeff_range <- global_coeff_ranges[[coeff]]
     coeff_plot <- ggplot(merged_year) +
-      # Plot GWR coefficients
       geom_sf(aes_string(fill = paste0("gwr_coeff_", coeff)), color = NA) +
-      scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0,
-                           name = paste("GWR Coeff:", coeff)) +
-      # Add borough boundaries
+      scale_fill_gradientn(
+        colors = custom_palette,
+        limits = coeff_range, # Set uniform scale
+        name = paste("GWR Coeff:", coeff),
+        labels = scales::number_format(accuracy = 0.01) # Ensure readable scale
+      ) +
       geom_sf(data = borough, fill = NA, color = "black", size = 0.3) +
-      # Add borough names
       geom_sf_text(data = borough, aes(label = NAME), size = 3, color = "black") +
       theme_minimal() +
       labs(
@@ -1825,6 +1870,7 @@ for (var in housing_vars) {
       x = "Year",
       y = paste("Average", var, "(across all MSOAs)")
     ) +
+    ylim(0, NA) + # Ensure y-axis includes 0 and extends to the max value dynamically
     theme_minimal()
   
   # Save the plot
@@ -1849,12 +1895,23 @@ housing_vars <- c("Rent", "Socialhousing", "Owned", "Houseprice", "Overoccupatio
 # Loop through each housing variable
 for (var in housing_vars) {
   
+  # Calculate the common range for the variable across 2001, 2011, and 2021
+  years_to_plot <- c(2001, 2011, 2021)
+  common_range <- filtered_segregation %>%
+    filter(Year %in% years_to_plot) %>%
+    summarise(min_value = min(.data[[var]], na.rm = TRUE),
+              max_value = max(.data[[var]], na.rm = TRUE))
+  
+  # Extract min and max values
+  min_value <- common_range$min_value
+  max_value <- common_range$max_value
+  
   # Plot full map for 2001–2021
   full_map <- ggplot(filtered_segregation) +
     geom_sf(aes_string(fill = var, geometry = "geometry"), color = NA) +
     geom_sf(data = borough, fill = NA, color = "black", size = 0.8) +
     geom_sf_text(data = borough, aes(label = NAME), size = 3, color = "black") +
-    scale_fill_viridis_c(option = "C", name = var) +
+    scale_fill_viridis_c(option = "C", name = var, limits = c(min_value, max_value)) +
     labs(
       title = paste(var, "Across London (2001–2021)"),
       caption = "Source: Housing Data"
@@ -1872,8 +1929,7 @@ for (var in housing_vars) {
     height = 8
   )
   
-  # Filter for specific years (2001, 2011, 2021)
-  years_to_plot <- c(2001, 2011, 2021)
+  # Loop through specific years (2001, 2011, 2021)
   for (year in years_to_plot) {
     yearly_data <- filtered_segregation %>% filter(Year == year)
     
@@ -1881,7 +1937,7 @@ for (var in housing_vars) {
       geom_sf(aes_string(fill = var, geometry = "geometry"), color = NA) +
       geom_sf(data = borough, fill = NA, color = "black", size = 0.8) +
       geom_sf_text(data = borough, aes(label = NAME), size = 3, color = "black") +
-      scale_fill_viridis_c(option = "C", name = var) +
+      scale_fill_viridis_c(option = "C", name = var, limits = c(min_value, max_value)) +
       labs(
         title = paste(var, "Across London in", year),
         caption = "Source: Housing Data"
